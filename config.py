@@ -19,6 +19,11 @@ BORDER_COLOR = (60, 60, 75)            # Subtle borders
 GRID_SIZE = 20  # pixels per cell
 GRID_COLOR = (40, 40, 50)
 
+# Wall settings
+WALL_COLOR = (80, 40, 100)             # Purple/dark magenta walls
+WALL_REPEL_RANGE = 120                 # How far ants sense walls (increased for better avoidance)
+WALL_REPEL_STRENGTH = 3.0              # How strongly ants avoid walls (increased)
+
 # UI settings
 UI_PADDING = 16
 UI_CORNER_RADIUS = 8
@@ -26,3 +31,20 @@ UI_BORDER_WIDTH = 1
 
 # Animation
 FPS = 60
+
+# =====================
+# REAL-TIME ADJUSTABLE PARAMETERS
+# These can be modified via UI sliders
+# =====================
+class RuntimeParams:
+    """Parameters that can be adjusted in real-time via UI"""
+    wall_repel_range = 120.0
+    wall_repel_strength = 3.0
+    ant_repulsion_radius = 25.0
+    momentum = 0.5
+    stuck_threshold = 15
+    random_jitter = 0.1
+    ant_repulsion_strength = 0.3
+
+# Global instance
+runtime = RuntimeParams()

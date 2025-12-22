@@ -41,7 +41,7 @@ def main():
         print("Starting new colony simulation...")
     
     running = True
-    show_pheromones = True
+    show_pheromones = False
     ui_manager.needs_reset = False
     
     while running:

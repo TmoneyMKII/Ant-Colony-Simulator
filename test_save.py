@@ -29,7 +29,7 @@ print(f"Saved to: ant_saves/colony_state.json")
 
 # Verify file exists
 if os.path.exists('ant_saves/colony_state.json'):
-print("Save file created successfully")
+    print("Save file created successfully")
     
     # Load it back
     print("\nLoading saved state...")

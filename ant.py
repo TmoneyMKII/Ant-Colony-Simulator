@@ -4,7 +4,7 @@ import pygame
 import math
 import random
 from enum import Enum
-from config import GRID_SIZE
+from config import GRID_SIZE, runtime
 from genetics import AntGenes, FitnessTracker
 
 class AntState(Enum):
@@ -58,6 +58,16 @@ class Ant:
         self.energy -= energy_cost
         self.fitness.energy_spent += energy_cost
         self.fitness.lifetime += 1
+        
+        # Track time since last food (for speed bonus)
+        if hasattr(self, 'time_since_food'):
+            self.time_since_food += 1
+        else:
+            self.time_since_food = 0
+        
+        # Track previous position for movement detection
+        self.prev_x = self.x
+        self.prev_y = self.y
         
         # Ant dies if out of energy
         if self.energy <= 0:
@@ -148,8 +158,9 @@ class Ant:
             self.direction += random.uniform(-math.pi/2, math.pi/2)
     
     def _avoid_other_ants(self, other_ants):
-        """Add small repulsion from nearby ants to prevent clustering"""
-        repulsion_radius = 15
+        """Add repulsion from nearby ants to prevent clustering (using runtime params)"""
+        repulsion_radius = runtime.ant_repulsion_radius
+        repel_strength = runtime.ant_repulsion_strength
         for other in other_ants:
             if other is self:
                 continue
@@ -157,8 +168,10 @@ class Ant:
             dy = self.y - other.y
             dist = math.sqrt(dx**2 + dy**2)
             if dist < repulsion_radius and dist > 0:
-                # Add small random direction change away from other ant
-                self.direction += random.uniform(-0.3, 0.3)
+                # Push away from other ant
+                push_strength = (repulsion_radius - dist) / repulsion_radius * 0.5
+                angle_away = math.atan2(dy, dx)
+                self.direction = self.direction * (1 - repel_strength) + angle_away * repel_strength
     
     def _forage(self, pheromone_map, width, height, food_sources, colony_pos):
         """Foraging behavior - search for food"""
@@ -173,6 +186,10 @@ class Ant:
                 self.food_amount = food_taken
                 self.state = AntState.RETURNING
                 self.direction = self._get_direction_to(colony_pos[0], colony_pos[1])
+                
+                # LEARNING INCENTIVE: Track how fast ant found food
+                self.fitness.food_discovery_time += self.time_since_food
+                self.time_since_food = 0  # Reset timer
                 return
         
         # Check pheromone trails (follow food pheromone if available)
@@ -230,18 +247,72 @@ class Ant:
     
     def _move(self, width, height, pheromone_map):
         """Move ant in current direction"""
-        # Smooth direction changes with momentum (prevents jittering)
-        momentum = 0.7
+        # Track consecutive stuck frames
+        if not hasattr(self, 'stuck_counter'):
+            self.stuck_counter = 0
+        
+        # Stuck detection and escape mechanism (using runtime params)
+        if self.stuck_counter > runtime.stuck_threshold:
+            self.direction = random.uniform(0, 2 * math.pi)  # Random new direction
+            self.stuck_counter = 0
+            # Jump a small distance to break free
+            self.x += random.uniform(-10, 10)
+            self.y += random.uniform(-10, 10)
+        
+        # Smooth direction changes with momentum (using runtime param)
+        momentum = runtime.momentum
         self.direction = self.previous_direction * momentum + self.direction * (1 - momentum)
         self.previous_direction = self.direction
         
+        # Add small random jitter to prevent perfect oscillation (using runtime param)
+        jitter = runtime.random_jitter
+        self.direction += random.uniform(-jitter, jitter)
+        
+        # Calculate base movement
+        base_dx = math.cos(self.direction) * self.speed
+        base_dy = math.sin(self.direction) * self.speed
+        
+        # Check for wall avoidance if colony has wall manager (using runtime params)
+        wall_dx = 0
+        wall_dy = 0
+        if hasattr(self.colony, 'wall_manager'):
+            wall_dx, wall_dy = self.colony.wall_manager.get_repel_vector(self.x, self.y, runtime.wall_repel_range)
+            # Scale wall repulsion to be significant (using runtime param)
+            wall_dx *= runtime.wall_repel_strength
+            wall_dy *= runtime.wall_repel_strength
+        
+        # Combine movements: 70% base direction, 30% wall repulsion
+        new_dx = base_dx * 0.7 + wall_dx * 0.3
+        new_dy = base_dy * 0.7 + wall_dy * 0.3
+        
         # Calculate new position
-        new_x = self.x + math.cos(self.direction) * self.speed
-        new_y = self.y + math.sin(self.direction) * self.speed
+        new_x = self.x + new_dx
+        new_y = self.y + new_dy
+        
+        # Check collision with walls and BLOCK movement if hitting wall
+        if hasattr(self.colony, 'wall_manager'):
+            new_x, new_y = self.colony.wall_manager.get_avoid_position(self.x, self.y, new_x, new_y, radius=self.radius)
+            # If blocked, penalize and turn away - LEARNING INCENTIVE
+            if new_x == self.x and new_y == self.y:
+                self.fitness.wall_hits += 1  # Penalty for hitting wall
+                self.energy -= 0.5           # Energy cost for collision
+                self.direction = random.uniform(0, 2 * math.pi)  # Complete random turn
+                self.stuck_counter += 5  # Big stuck penalty
         
         # Update position
         self.x = new_x
         self.y = new_y
+        
+        # Track distance traveled - LEARNING INCENTIVE (reward exploration)
+        dist = math.sqrt((self.x - self.prev_x)**2 + (self.y - self.prev_y)**2)
+        self.fitness.distance_traveled += dist
+        
+        # Check if stuck - LEARNING INCENTIVE (penalize staying still)
+        if dist < 0.5:
+            self.fitness.time_stuck += 1
+            self.stuck_counter += 1
+        else:
+            self.stuck_counter = max(0, self.stuck_counter - 1)  # Recover if moving
         
         # Hard clamp to bounds - this ensures ants NEVER leave the grid
         if hasattr(self, 'bounds') and self.bounds:

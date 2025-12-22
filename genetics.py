@@ -80,13 +80,34 @@ class FitnessTracker:
         self.energy_spent = 0
         self.lifetime = 0
         self.successful_trips = 0
+        # Learning incentives
+        self.wall_hits = 0           # Penalty for hitting walls
+        self.distance_traveled = 0   # Reward for exploration
+        self.time_stuck = 0          # Penalty for getting stuck
+        self.food_discovery_time = 0 # Reward for finding food fast
     
     def calculate_fitness(self):
-        """Calculate overall fitness score"""
-        # Weight different factors
-        food_score = self.food_collected * 10
+        """Calculate overall fitness score with learning incentives"""
+        # Positive rewards
+        food_score = self.food_collected * 15           # Strong food reward
         efficiency_score = (self.food_collected / max(1, self.energy_spent)) * 50
         survival_score = self.lifetime * 0.01
-        trip_score = self.successful_trips * 5
+        trip_score = self.successful_trips * 20         # Strong trip reward
+        exploration_score = self.distance_traveled * 0.01  # Reward movement
         
-        return food_score + efficiency_score + survival_score + trip_score
+        # Penalties (negative incentives)
+        wall_penalty = self.wall_hits * 5               # Punish wall hits
+        stuck_penalty = self.time_stuck * 0.5           # Punish getting stuck
+        
+        # Speed bonus - faster food finding is better
+        speed_bonus = 0
+        if self.successful_trips > 0 and self.food_discovery_time > 0:
+            avg_time = self.food_discovery_time / self.successful_trips
+            speed_bonus = max(0, 100 - avg_time) * 0.5  # Bonus for quick trips
+        
+        # Calculate total fitness
+        total = (food_score + efficiency_score + survival_score + 
+                 trip_score + exploration_score + speed_bonus - 
+                 wall_penalty - stuck_penalty)
+        
+        return max(0, total)  # Never negative

@@ -6,6 +6,7 @@ from ant import Ant, AntState
 from pheromone import PheromoneMap
 from genetics import AntGenes
 from save_state import load_colony_state, apply_saved_state_to_colony
+from walls import WallManager
 
 class FoodSource:
     """A food source on the map"""
@@ -64,6 +65,9 @@ class Colony:
         self.pheromone_map = PheromoneMap(width, height)
         self.food_sources = []
         self.time = 0
+        
+        # Create wall manager
+        self.wall_manager = WallManager(width, height, bounds.left if bounds else 0, bounds.top if bounds else 0)
         
         # Load saved state if available
         saved_state = load_colony_state()
@@ -201,6 +205,9 @@ class Colony:
         # Draw pheromones (background) - focus on food trails
         if show_pheromones:
             self.pheromone_map.draw(surface, show_foraging=False, show_returning=True, opacity=150)
+        
+        # Draw walls
+        self.wall_manager.draw(surface)
         
         # Draw food sources
         for food in self.food_sources:
