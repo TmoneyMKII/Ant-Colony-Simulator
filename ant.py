@@ -36,7 +36,7 @@ class Ant:
         self.target_y = None
         
         # Pheromone tracking
-        self.pheromone_strength = 0.5
+        self.pheromone_strength = 2.0  # Increased from 0.5
         self.can_deposit = True
         self.deposit_cooldown = 0
         

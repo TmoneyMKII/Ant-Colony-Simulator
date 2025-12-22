@@ -18,7 +18,7 @@ class PheromoneMap:
         self.foraging_pheromones = [[0.0 for _ in range(self.grid_width)] for _ in range(self.grid_height)]
         self.returning_pheromones = [[0.0 for _ in range(self.grid_width)] for _ in range(self.grid_height)]
         
-        self.evaporation_rate = 0.98  # Pheromones fade over time
+        self.evaporation_rate = 0.995  # Slower evaporation so trails last longer
         self.max_pheromone = 100.0
         
     def deposit_pheromone(self, x, y, strength, state):
@@ -97,7 +97,7 @@ class PheromoneMap:
                 self.foraging_pheromones[y][x] *= self.evaporation_rate
                 self.returning_pheromones[y][x] *= self.evaporation_rate
     
-    def draw(self, surface, show_foraging=True, show_returning=True, opacity=50):
+    def draw(self, surface, show_foraging=True, show_returning=True, opacity=120):
         """Draw pheromone map as overlay"""
         pheromone_surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
         
@@ -105,18 +105,20 @@ class PheromoneMap:
             for x in range(self.grid_width):
                 rect = pygame.Rect(x * self.cell_size, y * self.cell_size, self.cell_size, self.cell_size)
                 
-                # Draw foraging pheromones in blue
-                if show_foraging:
-                    strength = self.foraging_pheromones[y][x] / self.max_pheromone
-                    if strength > 0.01:
-                        color = (100, 150, 255, int(opacity * strength))
-                        pygame.draw.rect(pheromone_surface, color, rect)
-                
-                # Draw returning pheromones in green
+                # Draw returning pheromones (food trail) in bright green/yellow
                 if show_returning:
                     strength = self.returning_pheromones[y][x] / self.max_pheromone
-                    if strength > 0.01:
-                        color = (100, 255, 150, int(opacity * strength))
+                    if strength > 0.05:
+                        # Bright green-yellow gradient for food trail
+                        green_val = int(255 * min(1.0, strength * 1.5))
+                        color = (200, green_val, 50, int(opacity * strength))
+                        pygame.draw.rect(pheromone_surface, color, rect)
+                
+                # Draw foraging pheromones in subtle blue (optional)
+                if show_foraging:
+                    strength = self.foraging_pheromones[y][x] / self.max_pheromone
+                    if strength > 0.05:
+                        color = (80, 120, 200, int(opacity * 0.5 * strength))
                         pygame.draw.rect(pheromone_surface, color, rect)
         
         surface.blit(pheromone_surface, (0, 0))

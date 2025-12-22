@@ -143,9 +143,9 @@ class Colony:
         if view_rect is None:
             view_rect = surface.get_rect()
         
-        # Draw pheromones (background)
+        # Draw pheromones (background) - focus on food trails
         if show_pheromones:
-            self.pheromone_map.draw(surface, show_foraging=True, show_returning=True, opacity=40)
+            self.pheromone_map.draw(surface, show_foraging=False, show_returning=True, opacity=150)
         
         # Draw food sources
         for food in self.food_sources:
