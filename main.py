@@ -3,6 +3,7 @@ import sys
 from config import DARK_BG_COLOR, ACCENT_COLOR
 from ui import UIManager
 from colony import Colony
+from save_state import save_colony_state
 
 def main():
     """Initialize and run the ant colony simulation"""
@@ -28,6 +29,17 @@ def main():
                    main_area_rect.width, main_area_rect.height, 
                    bounds=main_area_rect)
     
+    # Register colony with UI manager
+    ui_manager.colony_ref = colony
+    
+    # Display load message if applicable
+    if ui_manager.loaded_state:
+        gen = ui_manager.loaded_state.get('generation', 0)
+        pool_size = len(ui_manager.loaded_state.get('gene_pool', []))
+        print(f"[LOADED] Generation {gen}, Gene Pool Size: {pool_size}")
+    else:
+        print("Starting new colony simulation...")
+    
     running = True
     show_pheromones = True
     ui_manager.needs_reset = False
@@ -41,9 +53,15 @@ def main():
                     running = False
                 elif event.key == pygame.K_SPACE:
                     ui_manager.simulation_running = not ui_manager.simulation_running
+                    # Save colony state when pausing
+                    if not ui_manager.simulation_running:
+                        save_colony_state(colony)
+                        print(f"Colony saved at generation {colony.generation}")
                 elif event.key == pygame.K_p:
                     show_pheromones = not show_pheromones
                 elif event.key == pygame.K_r:
+                    save_colony_state(colony)
+                    print(f"Colony saved at generation {colony.generation}")
                     colony = Colony(main_area_rect.centerx, main_area_rect.centery, 
                                   main_area_rect.width, main_area_rect.height, 
                                   bounds=main_area_rect)
@@ -57,18 +75,17 @@ def main():
         
         # Check if reset was requested
         if ui_manager.needs_reset:
+            save_colony_state(colony)
+            print(f"Colony saved at generation {colony.generation}")
             colony = Colony(main_area_rect.centerx, main_area_rect.centery, 
                           main_area_rect.width, main_area_rect.height, 
                           bounds=main_area_rect)
+            ui_manager.colony_ref = colony  # Update reference
             ui_manager.needs_reset = False
         
         # Update
         if ui_manager.simulation_running:
             colony.update()
-            # Keep ants within bounds
-            for ant in colony.ants:
-                ant.x = max(main_area_rect.left + 5, min(ant.x, main_area_rect.right - 5))
-                ant.y = max(main_area_rect.top + 5, min(ant.y, main_area_rect.bottom - 5))
         ui_manager.update()
         
         # Render

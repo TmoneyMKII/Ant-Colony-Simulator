@@ -1,0 +1,11 @@
+{
+  "timestamp": "2025-12-23T03:10:33.326100",
+  "generation": 0,
+  "gene_pool": [],
+  "stats": {
+    "best_fitness": 0,
+    "average_fitness": 0,
+    "population": 30,
+    "food_stored": 0
+  }
+}

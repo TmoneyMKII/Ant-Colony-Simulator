@@ -4,6 +4,8 @@ import pygame
 import random
 from ant import Ant, AntState
 from pheromone import PheromoneMap
+from genetics import AntGenes
+from save_state import load_colony_state, apply_saved_state_to_colony
 
 class FoodSource:
     """A food source on the map"""
@@ -11,11 +13,21 @@ class FoodSource:
         self.x = x
         self.y = y
         self.amount = amount
+        self.max_amount = amount
         self.radius = 10
         self.color = (200, 150, 50)
     
     def draw(self, surface):
-        pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), self.radius)
+        # Calculate size based on remaining food
+        size_ratio = max(0.3, self.amount / self.max_amount)
+        current_radius = int(self.radius * size_ratio)
+        
+        # Draw food with color intensity based on amount
+        color_intensity = int(200 * size_ratio)
+        color = (color_intensity, int(150 * size_ratio), 50)
+        
+        pygame.draw.circle(surface, color, (int(self.x), int(self.y)), current_radius)
+        
         # Draw amount indicator
         font = pygame.font.Font(None, 12)
         text = font.render(str(int(self.amount)), True, (255, 255, 255))
@@ -39,6 +51,12 @@ class Colony:
         self.population = 0
         self.max_population = 500
         
+        # Evolution tracking
+        self.generation = 0
+        self.best_fitness = 0
+        self.average_fitness = 0
+        self.gene_pool = []  # Store genes from successful ants
+        
         # Ants
         self.ants = []
         
@@ -46,6 +64,11 @@ class Colony:
         self.pheromone_map = PheromoneMap(width, height)
         self.food_sources = []
         self.time = 0
+        
+        # Load saved state if available
+        saved_state = load_colony_state()
+        if saved_state:
+            apply_saved_state_to_colony(self, saved_state)
         
         # Spawn initial ants
         self._spawn_initial_ants(30)
@@ -74,10 +97,12 @@ class Colony:
             x_min, x_max = 100, self.width - 100
             y_min, y_max = 100, self.height - 100
         
-        for _ in range(5):
+        for _ in range(12):  # Increased from 5 to 12
             x = random.uniform(x_min, x_max)
             y = random.uniform(y_min, y_max)
-            self.food_sources.append(FoodSource(x, y, 100))
+            # Random food amount between 50-150
+            amount = random.uniform(50, 150)
+            self.food_sources.append(FoodSource(x, y, amount))
     
     def add_food(self, amount):
         """Add food to colony"""
@@ -96,13 +121,24 @@ class Colony:
             return False
     
     def spawn_ant(self):
-        """Spawn a new ant if conditions allow"""
+        """Spawn a new ant with evolved genes"""
         if self.population < self.max_population and self.food_stored > 100:
             angle = random.uniform(0, 2 * 3.14159)
             dist = random.uniform(0, self.radius + 5)
             x = self.x + dist * __import__('math').cos(angle)
             y = self.y + dist * __import__('math').sin(angle)
-            self.ants.append(Ant(x, y, self))
+            
+            # Breed from successful parents if available
+            genes = None
+            if len(self.gene_pool) >= 2:
+                parent1 = random.choice(self.gene_pool)
+                parent2 = random.choice(self.gene_pool)
+                genes = AntGenes(parent1, parent2)
+                self.generation += 1
+            
+            new_ant = Ant(x, y, self, genes)
+            new_ant.generation = self.generation
+            self.ants.append(new_ant)
             self.population += 1
             self.food_stored -= 20  # Cost to create ant
     
@@ -116,7 +152,15 @@ class Colony:
         # Update ants
         dead_ants = []
         for i, ant in enumerate(self.ants):
-            if not ant.update(self.pheromone_map, self.width, self.height, self.food_sources, (self.x, self.y)):
+            if not ant.update(self.pheromone_map, self.width, self.height, self.food_sources, (self.x, self.y), self.ants, self.bounds):
+                # Store genes from successful ants
+                fitness = ant.fitness.calculate_fitness()
+                if fitness > 10:  # Minimum fitness threshold
+                    self.gene_pool.append(ant.genes.copy())
+                    # Keep only best genes (top 50)
+                    if len(self.gene_pool) > 50:
+                        self.gene_pool.sort(key=lambda g: self._estimate_gene_fitness(g), reverse=True)
+                        self.gene_pool = self.gene_pool[:50]
                 dead_ants.append(i)
         
         # Remove dead ants
@@ -132,10 +176,21 @@ class Colony:
             for _ in range(min(5, self.max_population - self.population)):
                 self.spawn_ant()
         
-        # Regenerate food sources
-        for food in self.food_sources:
-            if food.amount < 100:
-                food.amount += 0.1
+        # Remove depleted food sources and spawn new ones
+        depleted = [i for i, food in enumerate(self.food_sources) if food.amount <= 0]
+        for i in reversed(depleted):
+            self.food_sources.pop(i)
+        
+        # Spawn new food sources to maintain population
+        while len(self.food_sources) < 12:
+            if self.bounds:
+                x = random.uniform(self.bounds.left + 50, self.bounds.right - 50)
+                y = random.uniform(self.bounds.top + 50, self.bounds.bottom - 50)
+            else:
+                x = random.uniform(100, self.width - 100)
+                y = random.uniform(100, self.height - 100)
+            amount = random.uniform(50, 150)
+            self.food_sources.append(FoodSource(x, y, amount))
     
     def draw(self, surface, show_pheromones=True, view_rect=None):
         """Draw colony and all entities"""
@@ -161,12 +216,27 @@ class Colony:
         pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), self.radius)
         pygame.draw.circle(surface, (200, 150, 100), (int(self.x), int(self.y)), self.radius - 3, 2)
     
+    def _estimate_gene_fitness(self, genes):
+        """Rough fitness estimate for sorting genes"""
+        # Balance between speed and efficiency
+        return genes.speed * 10 + genes.pheromone_sensitivity * 50 - genes.energy_efficiency * 100
+    
     def get_stats(self):
         """Get colony statistics"""
+        # Calculate average fitness
+        if self.ants:
+            total_fitness = sum(ant.fitness.calculate_fitness() for ant in self.ants)
+            self.average_fitness = total_fitness / len(self.ants)
+            self.best_fitness = max(ant.fitness.calculate_fitness() for ant in self.ants)
+        
         return {
             'population': self.population,
             'food_stored': self.food_stored,
             'ants_foraging': sum(1 for a in self.ants if a.state == AntState.FORAGING),
             'ants_returning': sum(1 for a in self.ants if a.state == AntState.RETURNING),
-            'food_sources_active': sum(1 for f in self.food_sources if f.amount > 5)
+            'food_sources_active': sum(1 for f in self.food_sources if f.amount > 5),
+            'generation': self.generation,
+            'avg_fitness': self.average_fitness,
+            'best_fitness': self.best_fitness,
+            'gene_pool_size': len(self.gene_pool)
         }

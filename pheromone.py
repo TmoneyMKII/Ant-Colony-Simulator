@@ -18,8 +18,8 @@ class PheromoneMap:
         self.foraging_pheromones = [[0.0 for _ in range(self.grid_width)] for _ in range(self.grid_height)]
         self.returning_pheromones = [[0.0 for _ in range(self.grid_width)] for _ in range(self.grid_height)]
         
-        self.evaporation_rate = 0.995  # Slower evaporation so trails last longer
-        self.max_pheromone = 100.0
+        self.evaporation_rate = 0.999  # Much slower evaporation (was 0.995)
+        self.max_pheromone = 200.0  # Increased max to allow stronger trails
         
     def deposit_pheromone(self, x, y, strength, state):
         """Deposit pheromone at position"""
@@ -75,7 +75,7 @@ class PheromoneMap:
                     best_direction = math.atan2(dy, dx)
         
         # Only return direction if pheromone is strong enough
-        if best_strength > 10:
+        if best_strength > 15:  # Balanced threshold (was 5, originally 20)
             return best_direction
         
         return None
@@ -103,7 +103,12 @@ class PheromoneMap:
         
         for y in range(self.grid_height):
             for x in range(self.grid_width):
-                rect = pygame.Rect(x * self.cell_size, y * self.cell_size, self.cell_size, self.cell_size)
+                px = x * self.cell_size
+                py = y * self.cell_size
+                
+                # Only draw if within bounds
+                if px >= self.width or py >= self.height:
+                    continue
                 
                 # Draw returning pheromones (food trail) in bright green/yellow
                 if show_returning:
@@ -112,13 +117,20 @@ class PheromoneMap:
                         # Bright green-yellow gradient for food trail
                         green_val = int(255 * min(1.0, strength * 1.5))
                         color = (200, green_val, 50, int(opacity * strength))
-                        pygame.draw.rect(pheromone_surface, color, rect)
+                        # Draw smaller circles instead of rectangles to avoid artifacts
+                        center_x = px + self.cell_size // 2
+                        center_y = py + self.cell_size // 2
+                        radius = max(2, int(self.cell_size * strength * 0.4))
+                        pygame.draw.circle(pheromone_surface, color, (center_x, center_y), radius)
                 
                 # Draw foraging pheromones in subtle blue (optional)
                 if show_foraging:
                     strength = self.foraging_pheromones[y][x] / self.max_pheromone
                     if strength > 0.05:
                         color = (80, 120, 200, int(opacity * 0.5 * strength))
-                        pygame.draw.rect(pheromone_surface, color, rect)
+                        center_x = px + self.cell_size // 2
+                        center_y = py + self.cell_size // 2
+                        radius = max(2, int(self.cell_size * strength * 0.3))
+                        pygame.draw.circle(pheromone_surface, color, (center_x, center_y), radius)
         
         surface.blit(pheromone_surface, (0, 0))

@@ -5,6 +5,7 @@ from config import (
     WINDOW_WIDTH, WINDOW_HEIGHT, TEXT_PRIMARY, TEXT_SECONDARY,
     DARK_SECONDARY, ACCENT_COLOR, UI_PADDING, BORDER_COLOR, UI_CORNER_RADIUS, UI_BORDER_WIDTH
 )
+from save_state import load_colony_state
 
 class Button:
     """Modern button component"""
@@ -81,6 +82,10 @@ class UIManager:
         self.colony_ref = None
         self.main_area_rect = self.main_area.rect
         
+        # Check if we're loading a saved state
+        saved_state = load_colony_state()
+        self.loaded_state = saved_state
+        
         # Create buttons
         self.buttons = [
             Button(self.sidebar.rect.x + UI_PADDING, self.sidebar.rect.y + 80, 
@@ -93,19 +98,21 @@ class UIManager:
         
         self.simulation_running = True
         
-    def set_colony_reference(self, colony):
-        """Store reference to colony for reset"""
-        self.colony_ref = colony
-        
     def start_simulation(self):
         self.simulation_running = True
         
     def pause_simulation(self):
+        from save_state import save_colony_state
         self.simulation_running = False
+        if self.colony_ref:
+            save_colony_state(self.colony_ref)
         
     def reset_simulation(self):
+        from save_state import save_colony_state
         self.simulation_running = True
         self.needs_reset = True
+        if self.colony_ref:
+            save_colony_state(self.colony_ref)
         
     def update(self):
         mouse_pos = pygame.mouse.get_pos()
@@ -145,16 +152,27 @@ class UIManager:
             
     def _draw_stats(self, surface, stats, start_y):
         """Draw colony statistics"""
-        line_height = 25
+        line_height = 22
         
         stat_items = [
             f"Population: {stats['population']}",
-            f"Food Stored: {stats['food_stored']:.0f}",
+            f"Food: {stats['food_stored']:.0f}",
             f"Foraging: {stats['ants_foraging']}",
             f"Returning: {stats['ants_returning']}",
-            f"Food Sources: {stats['food_sources_active']}",
+            "",
+            f"== Evolution ==",
+            f"Generation: {stats['generation']}",
+            f"Gene Pool: {stats['gene_pool_size']}",
+            f"Avg Fitness: {stats['avg_fitness']:.1f}",
+            f"Best: {stats['best_fitness']:.1f}",
         ]
         
         for i, stat_text in enumerate(stat_items):
-            text_surface = self.stat_font.render(stat_text, True, TEXT_PRIMARY)
+            if stat_text == "== Evolution ==":
+                color = ACCENT_COLOR
+            elif stat_text == "":
+                continue
+            else:
+                color = TEXT_PRIMARY
+            text_surface = self.stat_font.render(stat_text, True, color)
             surface.blit(text_surface, (self.sidebar.rect.x + UI_PADDING, start_y + i * line_height))
