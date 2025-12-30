@@ -3,9 +3,50 @@
 import pygame
 import math
 import random
+import os
 from enum import Enum
 from src.config import GRID_SIZE, runtime
 from src.genetics import AntGenes, FitnessTracker
+
+# Load ant sprite once at module level
+_ant_sprite = None
+_ant_sprite_carrying = None
+
+def _load_ant_sprites():
+    """Load and composite the black ant sprite parts"""
+    global _ant_sprite, _ant_sprite_carrying
+    
+    if _ant_sprite is not None:
+        return
+    
+    base_path = os.path.join("assets", "spriter_file_png_pieces", "black_ant")
+    
+    # Create a surface to composite the ant (size based on parts)
+    sprite_size = 48
+    _ant_sprite = pygame.Surface((sprite_size, sprite_size), pygame.SRCALPHA)
+    
+    # Load parts and position them to form an ant
+    # Ant faces RIGHT by default (direction = 0)
+    parts = [
+        ("abdomen.png", (30, 20)),    # Back
+        ("thorax.png", (18, 20)),      # Middle  
+        ("head.png", (6, 20)),         # Front
+    ]
+    
+    for part_file, pos in parts:
+        part_path = os.path.join(base_path, part_file)
+        if os.path.exists(part_path):
+            part = pygame.image.load(part_path).convert_alpha()
+            # Scale down parts to fit
+            part = pygame.transform.scale(part, (16, 16))
+            _ant_sprite.blit(part, pos)
+    
+    # Scale final sprite
+    _ant_sprite = pygame.transform.scale(_ant_sprite, (24, 24))
+    
+    # Create a green-tinted version for carrying food
+    _ant_sprite_carrying = _ant_sprite.copy()
+    _ant_sprite_carrying.fill((100, 255, 150, 255), special_flags=pygame.BLEND_RGBA_MULT)
 
 class AntState(Enum):
     """Ant behavior states"""
@@ -338,7 +379,8 @@ class Ant:
     
     def draw(self, surface):
         """Draw ant on surface"""
-        color = (100, 255, 150) if self.carrying_food else self.color
+        # Load sprites if not already loaded
+        _load_ant_sprites()
         
         # Draw fading pheromone trail (even after dropping food)
         if len(self.trail) > 1:
@@ -357,10 +399,13 @@ class Ant:
                     pygame.draw.circle(trail_surface, trail_color, (4, 4), 3)
                     surface.blit(trail_surface, (int(point[0]) - 4, int(point[1]) - 4))
         
-        # Draw ant body
-        pygame.draw.circle(surface, color, (int(self.x), int(self.y)), self.radius)
+        # Select sprite based on carrying state
+        sprite = _ant_sprite_carrying if self.carrying_food else _ant_sprite
         
-        # Draw direction indicator
-        end_x = self.x + math.cos(self.direction) * 12
-        end_y = self.y + math.sin(self.direction) * 12
-        pygame.draw.line(surface, color, (int(self.x), int(self.y)), (int(end_x), int(end_y)), 2)
+        # Rotate sprite to match direction (convert radians to degrees, pygame uses counter-clockwise)
+        angle = -math.degrees(self.direction)
+        rotated_sprite = pygame.transform.rotate(sprite, angle)
+        
+        # Get rect centered on ant position
+        rect = rotated_sprite.get_rect(center=(int(self.x), int(self.y)))
+        surface.blit(rotated_sprite, rect)
