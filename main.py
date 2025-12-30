@@ -1,15 +1,35 @@
 import pygame
 import sys
-from config import DARK_BG_COLOR, ACCENT_COLOR
-from ui import UIManager
+from config import DARK_BG_COLOR, GRID_SIZE, GRID_COLOR
 from colony import Colony
-from save_state import save_colony_state
+from save_state import save_colony_state, load_colony_state
+
+def draw_keybind_hints(screen, font):
+    """Draw keybind hints overlay"""
+    hints = [
+        "[SPACE] Pause/Resume",
+        "[P] Toggle Pheromones",
+        "[R] Reset Colony",
+        "[G] Toggle Grid",
+        "[H] Hide Hints",
+        "[ESC] Quit",
+    ]
+    
+    # Semi-transparent background
+    hint_surface = pygame.Surface((220, len(hints) * 25 + 20), pygame.SRCALPHA)
+    hint_surface.fill((0, 0, 0, 180))
+    
+    for i, hint in enumerate(hints):
+        text = font.render(hint, True, (200, 200, 210))
+        hint_surface.blit(text, (15, 10 + i * 25))
+    
+    screen.blit(hint_surface, (20, 20))
 
 def main():
     """Initialize and run the ant colony simulation"""
     pygame.init()
     
-    # Create fullscreen window with borders
+    # Create fullscreen window
     info = pygame.display.Info()
     screen = pygame.display.set_mode((info.current_w, info.current_h))
     pygame.display.set_caption("Ant Colony Simulator")
@@ -18,31 +38,33 @@ def main():
     width = info.current_w
     height = info.current_h
     
-    # Create UI manager
-    ui_manager = UIManager(screen)
+    # Simulation area is full screen
+    sim_rect = pygame.Rect(0, 0, width, height)
     
-    # Get main simulation area bounds
-    main_area_rect = ui_manager.main_area.rect
+    # Create colony
+    colony = Colony(sim_rect.centerx, sim_rect.centery, 
+                   sim_rect.width, sim_rect.height, 
+                   bounds=sim_rect)
     
-    # Create colony with bounds
-    colony = Colony(main_area_rect.centerx, main_area_rect.centery, 
-                   main_area_rect.width, main_area_rect.height, 
-                   bounds=main_area_rect)
-    
-    # Register colony with UI manager
-    ui_manager.colony_ref = colony
-    
-    # Display load message if applicable
-    if ui_manager.loaded_state:
-        gen = ui_manager.loaded_state.get('generation', 0)
-        pool_size = len(ui_manager.loaded_state.get('gene_pool', []))
+    # Check for loaded state
+    saved_state = load_colony_state()
+    if saved_state:
+        gen = saved_state.get('generation', 0)
+        pool_size = len(saved_state.get('gene_pool', []))
         print(f"[LOADED] Generation {gen}, Gene Pool Size: {pool_size}")
     else:
         print("Starting new colony simulation...")
     
+    # State
     running = True
+    simulation_running = True
     show_pheromones = False
-    ui_manager.needs_reset = False
+    show_hints = False
+    show_grid = True
+    
+    # Fonts
+    hint_font = pygame.font.Font(None, 20)
+    small_font = pygame.font.Font(None, 18)
     
     while running:
         for event in pygame.event.get():
@@ -52,9 +74,8 @@ def main():
                 if event.key == pygame.K_ESCAPE:
                     running = False
                 elif event.key == pygame.K_SPACE:
-                    ui_manager.simulation_running = not ui_manager.simulation_running
-                    # Save colony state when pausing
-                    if not ui_manager.simulation_running:
+                    simulation_running = not simulation_running
+                    if not simulation_running:
                         save_colony_state(colony)
                         print(f"Colony saved at generation {colony.generation}")
                 elif event.key == pygame.K_p:
@@ -62,66 +83,43 @@ def main():
                 elif event.key == pygame.K_r:
                     save_colony_state(colony)
                     print(f"Colony saved at generation {colony.generation}")
-                    colony = Colony(main_area_rect.centerx, main_area_rect.centery, 
-                                  main_area_rect.width, main_area_rect.height, 
-                                  bounds=main_area_rect)
-                    ui_manager.simulation_running = True
-            elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1:  # Left click
-                    mouse_pos = pygame.mouse.get_pos()
-                    for button in ui_manager.buttons:
-                        if button.rect.collidepoint(mouse_pos):
-                            button.handle_click()
-        
-        # Check if reset was requested
-        if ui_manager.needs_reset:
-            save_colony_state(colony)
-            print(f"Colony saved at generation {colony.generation}")
-            colony = Colony(main_area_rect.centerx, main_area_rect.centery, 
-                          main_area_rect.width, main_area_rect.height, 
-                          bounds=main_area_rect)
-            ui_manager.colony_ref = colony  # Update reference
-            ui_manager.needs_reset = False
+                    colony = Colony(sim_rect.centerx, sim_rect.centery, 
+                                  sim_rect.width, sim_rect.height, 
+                                  bounds=sim_rect)
+                    simulation_running = True
+                elif event.key == pygame.K_h:
+                    show_hints = not show_hints
+                elif event.key == pygame.K_g:
+                    show_grid = not show_grid
         
         # Update
-        if ui_manager.simulation_running:
+        if simulation_running:
             colony.update()
-        ui_manager.update()
         
         # Render
         screen.fill(DARK_BG_COLOR)
         
-        # Get main area rect for rendering
-        main_area_rect = ui_manager.main_area.rect
+        # Draw grid
+        if show_grid:
+            for x in range(0, width, GRID_SIZE):
+                pygame.draw.line(screen, GRID_COLOR, (x, 0), (x, height), 1)
+            for y in range(0, height, GRID_SIZE):
+                pygame.draw.line(screen, GRID_COLOR, (0, y), (width, y), 1)
         
-        # Draw UI panels first (background)
-        ui_manager.sidebar.draw(screen)
-        ui_manager.main_area.draw(screen)
-        
-        # Draw simulation background and grid in main area
-        main_area_rect = ui_manager.main_area.rect
-        pygame.draw.rect(screen, (20, 20, 25), main_area_rect)
-        
-        # Draw grid in simulation area
-        from config import GRID_SIZE, GRID_COLOR
-        for x in range(main_area_rect.left, main_area_rect.right, GRID_SIZE):
-            pygame.draw.line(screen, GRID_COLOR, (x, main_area_rect.top), (x, main_area_rect.bottom), 1)
-        for y in range(main_area_rect.top, main_area_rect.bottom, GRID_SIZE):
-            pygame.draw.line(screen, GRID_COLOR, (main_area_rect.left, y), (main_area_rect.right, y), 1)
-        
-        # Draw colony entities (ants, food, etc.) on top
+        # Draw colony
         colony.draw(screen, show_pheromones=show_pheromones)
         
-        # Draw buttons and stats on top
-        for button in ui_manager.buttons:
-            button.draw(screen)
-        ui_manager._draw_stats(screen, colony.get_stats(), ui_manager.sidebar.rect.y + 250)
+        # Draw hint toggle or full hints
+        if show_hints:
+            draw_keybind_hints(screen, hint_font)
+        else:
+            hint_text = small_font.render("[H] Keybinds", True, (120, 120, 130))
+            screen.blit(hint_text, (15, 15))
         
-        # Draw status and title
-        status = "Running" if ui_manager.simulation_running else "Paused"
-        status_font = pygame.font.Font(None, 16)
-        status_surface = status_font.render(f"Status: {status}", True, (180, 180, 190))
-        screen.blit(status_surface, (ui_manager.sidebar.rect.x + 16, ui_manager.sidebar.rect.y + ui_manager.sidebar.rect.height - 60))
+        # Show paused indicator
+        if not simulation_running:
+            pause_text = hint_font.render("PAUSED", True, (255, 200, 100))
+            screen.blit(pause_text, (width // 2 - 30, 15))
         
         pygame.display.flip()
         clock.tick(60)
