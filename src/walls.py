@@ -2,7 +2,7 @@
 
 import pygame
 import math
-from config import WALL_COLOR, WALL_REPEL_RANGE, WALL_REPEL_STRENGTH
+from src.config import WALL_COLOR, WALL_REPEL_RANGE, WALL_REPEL_STRENGTH
 
 
 class Wall:

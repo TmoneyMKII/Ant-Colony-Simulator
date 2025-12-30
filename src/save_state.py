@@ -3,7 +3,7 @@
 import json
 import os
 from datetime import datetime
-from genetics import AntGenes
+from src.genetics import AntGenes
 
 SAVE_DIR = "ant_saves"
 SAVE_FILE = os.path.join(SAVE_DIR, "colony_state.json")

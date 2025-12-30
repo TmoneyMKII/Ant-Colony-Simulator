@@ -4,8 +4,8 @@ import pygame
 import math
 import random
 from enum import Enum
-from config import GRID_SIZE, runtime
-from genetics import AntGenes, FitnessTracker
+from src.config import GRID_SIZE, runtime
+from src.genetics import AntGenes, FitnessTracker
 
 class AntState(Enum):
     """Ant behavior states"""

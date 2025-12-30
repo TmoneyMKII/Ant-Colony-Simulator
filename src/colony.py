@@ -2,11 +2,11 @@
 
 import pygame
 import random
-from ant import Ant, AntState
-from pheromone import PheromoneMap
-from genetics import AntGenes
-from save_state import load_colony_state, apply_saved_state_to_colony
-from walls import WallManager
+from src.ant import Ant, AntState
+from src.pheromone import PheromoneMap
+from src.genetics import AntGenes
+from src.save_state import load_colony_state, apply_saved_state_to_colony
+from src.walls import WallManager
 
 class FoodSource:
     """A food source on the map"""

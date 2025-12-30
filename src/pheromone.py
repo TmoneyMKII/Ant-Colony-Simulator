@@ -2,7 +2,7 @@
 
 import math
 import pygame
-from ant import AntState
+from src.ant import AntState
 
 class PheromoneMap:
     """Manages pheromone trails left by ants"""

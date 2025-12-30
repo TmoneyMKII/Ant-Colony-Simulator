@@ -1,8 +1,8 @@
 import pygame
 import sys
-from config import DARK_BG_COLOR, GRID_SIZE, GRID_COLOR
-from colony import Colony
-from save_state import save_colony_state, load_colony_state
+from src.config import DARK_BG_COLOR, GRID_SIZE, GRID_COLOR
+from src.colony import Colony
+from src.save_state import save_colony_state, load_colony_state
 
 def draw_keybind_hints(screen, font):
     """Draw keybind hints overlay"""

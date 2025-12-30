@@ -2,7 +2,7 @@
 
 ## Architecture Overview
 
-This is a **Pygame-based ant colony simulation** with emergent swarm intelligence through pheromones and genetic evolution. Key data flows:
+**Pygame-based ant colony simulation** with emergent swarm intelligence through pheromones and genetic evolution.
 
 ```
 main.py (game loop) → Colony → Ants ↔ PheromoneMap
@@ -10,19 +10,26 @@ main.py (game loop) → Colony → Ants ↔ PheromoneMap
                     FoodSources    AntGenes/FitnessTracker
 ```
 
-**Core modules:**
-- [main.py](../main.py) - Event loop, rendering, keyboard shortcuts (SPACE/P/R/ESC)
-- [colony.py](../colony.py) - Colony management, spawning, evolution, food sources
-- [ant.py](../ant.py) - Ant behavior state machine (FORAGING→RETURNING→IDLE)
-- [pheromone.py](../pheromone.py) - Grid-based chemical communication (20px cells)
-- [genetics.py](../genetics.py) - 5 evolvable traits + fitness calculation
-- [save_state.py](../save_state.py) - JSON persistence to `ant_saves/`
-- [walls.py](../walls.py) - Obstacle avoidance system
+## Project Structure
+
+```
+├── main.py              # Entry point, game loop, keyboard controls
+├── src/
+│   ├── ant.py           # Ant behavior state machine (FORAGING→RETURNING→IDLE)
+│   ├── colony.py        # Colony management, spawning, evolution
+│   ├── config.py        # Colors, constants, RuntimeParams
+│   ├── genetics.py      # 5 evolvable traits + fitness calculation
+│   ├── pheromone.py     # Grid-based chemical communication (20px cells)
+│   ├── save_state.py    # JSON persistence to ant_saves/
+│   └── walls.py         # Obstacle system
+├── ant_saves/           # Save files (auto-created)
+└── requirements.txt
+```
 
 ## Key Patterns
 
-### Genetic Traits (genetics.py)
-All ant behavior is controlled by these 5 genes with specific ranges:
+### Genetic Traits (src/genetics.py)
+All ant behavior is controlled by these 5 genes:
 | Trait | Range | Purpose |
 |-------|-------|---------|
 | `speed` | 1.0-4.0 | Movement velocity |
@@ -33,10 +40,10 @@ All ant behavior is controlled by these 5 genes with specific ranges:
 
 When modifying genes, always respect `_clamp_genes()` bounds and maintain the crossover/mutation pattern.
 
-### Runtime Configuration (config.py)
+### Runtime Configuration (src/config.py)
 Use `RuntimeParams` class for real-time adjustable parameters:
 ```python
-from config import runtime
+from src.config import runtime
 runtime.wall_repel_range = 120.0  # Modify at runtime
 ```
 
@@ -60,20 +67,21 @@ Located in `FitnessTracker.calculate_fitness()`. Key scoring:
 - `successful_trips * 20` (trip bonus)
 - Penalties for `wall_hits` and `time_stuck`
 
-## Developer Workflow
+## Controls
+
+| Key | Action |
+|-----|--------|
+| SPACE | Pause/Resume (auto-saves) |
+| P | Toggle pheromone visualization |
+| R | Reset colony (auto-saves) |
+| G | Toggle grid |
+| H | Show keybind hints |
+| ESC | Quit |
+
+## Running
 
 ```bash
-# Run simulation
 python main.py
-
-# Test save/load system
-python test_save.py
-
-# Test evolution mechanics
-python test_evolution.py
-
-# Verify all systems
-python verify_system.py
 ```
 
 ## Common Modification Points
@@ -82,9 +90,15 @@ python verify_system.py
 |------|----------|
 | Add new genetic trait | `AntGenes.__init__`, `_mutate()`, `_clamp_genes()`, `genes_to_dict()` |
 | Change ant behavior | `Ant._forage()`, `Ant._return_to_colony()` in ant.py |
-| Modify UI stats | `UIManager.draw()` in ui.py |
 | Adjust wall layout | `WallManager._create_walls()` in walls.py |
 | Change food respawn | `Colony._create_food_sources()`, `Colony._check_food_respawn()` |
+
+## Conventions
+
+- **State machine pattern**: Ant behavior uses `AntState` enum (FORAGING/RETURNING/IDLE)
+- **Bounds checking**: Always use `self.bounds` rect for constraining positions
+- **Gene pool**: Top 50 genes preserved in `colony.gene_pool`, used for breeding
+- **Coordinate system**: Pygame (0,0 at top-left), positions stored as floats
 
 ## Conventions
 
