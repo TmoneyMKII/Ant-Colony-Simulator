@@ -2,11 +2,30 @@
 
 import pygame
 import random
+import os
 from src.ant import Ant, AntState
 from src.pheromone_model import PheromoneModel
 from src.save_state import load_colony_state, apply_saved_state_to_colony
 from src.walls import WallManager
 from src.config import INITIAL_ANT_COUNT, MAX_POPULATION
+
+# Load death marker sprite
+_death_marker_sprite = None
+
+def _load_death_marker():
+    """Load the blood splat sprite for dead ants"""
+    global _death_marker_sprite
+    if _death_marker_sprite is None:
+        path = os.path.join("assets", "spriter_file_png_pieces", "squashed_blood.png")
+        try:
+            _death_marker_sprite = pygame.image.load(path).convert_alpha()
+            # Scale it down to ant size
+            _death_marker_sprite = pygame.transform.scale(_death_marker_sprite, (24, 24))
+        except:
+            # Fallback: create a simple red circle
+            _death_marker_sprite = pygame.Surface((24, 24), pygame.SRCALPHA)
+            pygame.draw.circle(_death_marker_sprite, (150, 30, 30, 180), (12, 12), 10)
+    return _death_marker_sprite
 
 class FoodSource:
     """A food source on the map"""
@@ -62,6 +81,10 @@ class Colony:
         
         # Create wall manager
         self.wall_manager = WallManager(width, height, bounds.left if bounds else 0, bounds.top if bounds else 0)
+        
+        # Death markers (x, y, frames_remaining) - shows blood splat for 10 seconds
+        self.death_markers = []
+        self.death_marker_duration = 60 * 10  # 10 seconds at 60 FPS
         
         # Load saved state if available
         saved_state = load_colony_state()
@@ -159,12 +182,19 @@ class Colony:
         dead_ants = []
         for i, ant in enumerate(self.ants):
             if not ant.update(self.pheromone_map, self.width, self.height, self.food_sources, (self.x, self.y), self.ants, self.bounds):
-                dead_ants.append(i)
+                dead_ants.append((i, ant.x, ant.y))  # Track position of death
         
-        # Remove dead ants
-        for i in reversed(dead_ants):
+        # Remove dead ants and add death markers
+        for i, x, y in reversed(dead_ants):
             self.ants.pop(i)
             self.population -= 1
+            # Add death marker at ant's position
+            self.death_markers.append([x, y, self.death_marker_duration])
+            # Deposit danger pheromone where ant died
+            self.pheromone_map.deposit_danger(x, y, 150)
+        
+        # Update death markers (count down and remove expired)
+        self.death_markers = [[x, y, frames - 1] for x, y, frames in self.death_markers if frames > 1]
         
         # Consume food for remaining population
         self.consume_food()
@@ -210,6 +240,23 @@ class Colony:
         for food in self.food_sources:
             if view_rect.collidepoint(food.x, food.y):
                 food.draw(surface)
+        
+        # Draw death markers (blood splats)
+        death_sprite = _load_death_marker()
+        for x, y, frames in self.death_markers:
+            if view_rect.collidepoint(x, y):
+                # Fade out in the last 2 seconds
+                alpha = 255
+                if frames < 120:  # Last 2 seconds
+                    alpha = int(255 * (frames / 120))
+                
+                # Create faded copy if needed
+                if alpha < 255:
+                    faded = death_sprite.copy()
+                    faded.set_alpha(alpha)
+                    surface.blit(faded, (int(x) - 12, int(y) - 12))
+                else:
+                    surface.blit(death_sprite, (int(x) - 12, int(y) - 12))
         
         # Draw ants
         for ant in self.ants:

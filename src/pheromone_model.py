@@ -15,6 +15,7 @@ class PheromoneType(Enum):
     """Types of pheromone trails"""
     FOOD_TRAIL = "food"   # Green - deposited when returning with food
     HOME_TRAIL = "home"   # Blue - deposited when foraging (leaving colony)
+    DANGER = "danger"     # Red - deposited where ants die, deters other ants
 
 
 class PheromoneLayer:
@@ -68,18 +69,21 @@ class PheromoneModel:
         self.grid_width = width // cell_size
         self.grid_height = height // cell_size
         
-        # Two separate pheromone layers
+        # Three separate pheromone layers
         self.food_trail = PheromoneLayer(self.grid_width, self.grid_height)
         self.home_trail = PheromoneLayer(self.grid_width, self.grid_height)
+        self.danger_trail = PheromoneLayer(self.grid_width, self.grid_height)
         
         # Configuration
         self.max_pheromone = 200.0
         self.evaporation_rate = 0.995  # Per frame decay
+        self.danger_evaporation_rate = 0.998  # Danger fades slower (matches 10s blood splat)
         self.detection_threshold = 10.0  # Minimum to detect
         
         # Rendering colors (RGBA)
         self.food_color = (0, 255, 100)    # Bright green
         self.home_color = (100, 150, 255)  # Bright blue
+        self.danger_color = (255, 50, 50)  # Red for danger
         
         # Pre-create surface for efficiency
         self.surface = pygame.Surface((width, height), pygame.SRCALPHA)
@@ -96,6 +100,8 @@ class PheromoneModel:
         """Get the appropriate layer for pheromone type"""
         if ptype == PheromoneType.FOOD_TRAIL:
             return self.food_trail
+        elif ptype == PheromoneType.DANGER:
+            return self.danger_trail
         return self.home_trail
     
     # ==================== DEPOSIT ====================
@@ -120,6 +126,10 @@ class PheromoneModel:
     def deposit_home_trail(self, x, y, amount):
         """Convenience: Deposit blue home trail (foraging ants)"""
         self.deposit(x, y, amount, PheromoneType.HOME_TRAIL)
+    
+    def deposit_danger(self, x, y, amount=150):
+        """Deposit red danger pheromone where an ant died"""
+        self.deposit(x, y, amount, PheromoneType.DANGER)
     
     # ==================== SENSING ====================
     
@@ -184,26 +194,89 @@ class PheromoneModel:
         """Convenience: Get direction toward home (blue trail)"""
         return self.get_trail_direction(x, y, PheromoneType.HOME_TRAIL, current_dir)
     
+    def get_danger_level(self, x, y):
+        """Get danger pheromone level at position"""
+        return self.get_strength(x, y, PheromoneType.DANGER)
+    
+    def get_danger_avoidance(self, x, y, current_dir):
+        """
+        Get direction to avoid danger areas.
+        Returns (should_avoid, turn_amount) tuple.
+        """
+        gx, gy = self._to_grid(x, y)
+        
+        # Check danger levels in surrounding cells
+        max_danger = 0
+        danger_dx = 0
+        danger_dy = 0
+        
+        directions = [
+            (-1, -1), (0, -1), (1, -1),
+            (-1,  0),          (1,  0),
+            (-1,  1), (0,  1), (1,  1)
+        ]
+        
+        for dx, dy in directions:
+            nx, ny = gx + dx, gy + dy
+            danger = self.danger_trail.get(nx, ny)
+            if danger > max_danger:
+                max_danger = danger
+                danger_dx = dx
+                danger_dy = dy
+        
+        # Also check current cell
+        current_danger = self.danger_trail.get(gx, gy)
+        if current_danger > max_danger:
+            max_danger = current_danger
+            danger_dx = 0
+            danger_dy = 0
+        
+        if max_danger < self.detection_threshold:
+            return False, 0
+        
+        # Calculate direction AWAY from danger
+        if danger_dx != 0 or danger_dy != 0:
+            away_dir = math.atan2(-danger_dy, -danger_dx)
+        else:
+            # In danger cell - turn around
+            away_dir = current_dir + math.pi
+        
+        # Calculate turn needed
+        angle_diff = away_dir - current_dir
+        while angle_diff > math.pi:
+            angle_diff -= 2 * math.pi
+        while angle_diff < -math.pi:
+            angle_diff += 2 * math.pi
+        
+        # Urgency based on danger level
+        urgency = min(1.0, max_danger / 100.0)
+        turn = angle_diff * urgency * 0.5
+        
+        return True, turn
+    
     # ==================== UPDATE ====================
     
     def update(self):
         """Update pheromones (apply evaporation). Call once per frame."""
         self.food_trail.evaporate(self.evaporation_rate)
         self.home_trail.evaporate(self.evaporation_rate)
+        self.danger_trail.evaporate(self.danger_evaporation_rate)
     
     def clear(self):
         """Clear all pheromones"""
         self.food_trail.clear()
         self.home_trail.clear()
+        self.danger_trail.clear()
     
     # ==================== RENDERING ====================
     
-    def draw(self, target_surface, show_food=True, show_home=True, opacity=200):
+    def draw(self, target_surface, show_food=True, show_home=True, show_danger=True, opacity=200):
         """
         Draw pheromone visualization - SIMPLE RECT SYSTEM.
         
         Green = Food trail (from returning ants)
         Blue = Home trail (from foraging ants)
+        Red = Danger (where ants died)
         """
         # Draw directly to target - simpler approach
         for gy in range(self.grid_height):
@@ -213,9 +286,10 @@ class PheromoneModel:
                 
                 food_strength = self.food_trail.get(gx, gy)
                 home_strength = self.home_trail.get(gx, gy)
+                danger_strength = self.danger_trail.get(gx, gy)
                 
-                # Skip if both are below threshold
-                if food_strength < 5 and home_strength < 5:
+                # Skip if all are below threshold
+                if food_strength < 5 and home_strength < 5 and danger_strength < 5:
                     continue
                 
                 # Create a surface for this cell
@@ -228,12 +302,19 @@ class PheromoneModel:
                     blue_color = (50, 100, 255, alpha)
                     pygame.draw.rect(cell_surface, blue_color, (0, 0, self.cell_size, self.cell_size))
                 
-                # Draw FOOD trail (GREEN) on top
+                # Draw FOOD trail (GREEN)
                 if show_food and food_strength >= 5:
                     intensity = min(1.0, food_strength / 100.0)
                     alpha = int(180 * intensity)
                     green_color = (50, 255, 50, alpha)
                     pygame.draw.rect(cell_surface, green_color, (0, 0, self.cell_size, self.cell_size))
+                
+                # Draw DANGER trail (RED) on top - most important to see
+                if show_danger and danger_strength >= 5:
+                    intensity = min(1.0, danger_strength / 100.0)
+                    alpha = int(120 * intensity)
+                    red_color = (255, 50, 50, alpha)
+                    pygame.draw.rect(cell_surface, red_color, (0, 0, self.cell_size, self.cell_size))
                 
                 target_surface.blit(cell_surface, (x, y))
     

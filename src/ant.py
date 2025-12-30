@@ -109,11 +109,46 @@ class Ant:
         self.max_trail_length = 60
         self.trail_update_counter = 0
         
+        # Movement tracking for stuck detection
+        self.movement_check_interval = 180  # Check every 3 seconds (60 FPS * 3)
+        self.min_movement_distance = 80     # Must move at least 80 pixels (~4 grid spaces)
+        self.movement_timer = 0
+        self.checkpoint_x = x
+        self.checkpoint_y = y
+        self.stuck_escape_count = 0         # Track how many times we've tried to escape
+        self.max_escape_attempts = 5        # After this many failed escapes, ant dies
+        
     def update(self, pheromone_map, width, height, food_sources, colony_pos, other_ants=None, bounds=None):
         """Update ant behavior each frame"""
         # Check if ant is dead (e.g., stuck in wall)
         if not self.alive:
             return False
+        
+        # Movement-based stuck detection
+        self.movement_timer += 1
+        if self.movement_timer >= self.movement_check_interval:
+            # Calculate distance moved since last checkpoint
+            dist_moved = math.sqrt((self.x - self.checkpoint_x)**2 + (self.y - self.checkpoint_y)**2)
+            if dist_moved < self.min_movement_distance:
+                # Ant hasn't moved enough - try to escape with random direction
+                self.stuck_escape_count += 1
+                if self.stuck_escape_count >= self.max_escape_attempts:
+                    # Too many failed escape attempts - ant dies
+                    self.alive = False
+                    return False
+                else:
+                    # Random direction escape attempt
+                    self.direction = random.uniform(0, 2 * math.pi)
+                    # Small random teleport to break free from corners
+                    self.x += random.uniform(-15, 15)
+                    self.y += random.uniform(-15, 15)
+            else:
+                # Ant is moving fine - reset escape counter
+                self.stuck_escape_count = 0
+            # Reset checkpoint
+            self.checkpoint_x = self.x
+            self.checkpoint_y = self.y
+            self.movement_timer = 0
         
         energy_cost = DEFAULT_ENERGY_EFFICIENCY
         self.energy -= energy_cost
@@ -415,6 +450,11 @@ class Ant:
             )
             if should_turn:
                 self.direction += turn_amount
+        
+        # DANGER PHEROMONE AVOIDANCE - avoid areas where ants have died
+        should_avoid, avoid_turn = pheromone_map.get_danger_avoidance(self.x, self.y, self.direction)
+        if should_avoid:
+            self.direction += avoid_turn
         
         # Smooth direction changes with momentum
         momentum = 0.7
