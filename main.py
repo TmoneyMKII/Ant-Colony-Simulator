@@ -4,6 +4,7 @@ from src.config import DARK_BG_COLOR, GRID_SIZE, GRID_COLOR, CLICK_FOOD_AMOUNT, 
 from src.colony import Colony
 from src.save_state import save_colony_state, load_colony_state
 from src.debug import DebugSystem, DebugMode
+from src.stats_ui import StatsUI
 
 def draw_keybind_hints(screen, font):
     """Draw keybind hints overlay"""
@@ -11,6 +12,7 @@ def draw_keybind_hints(screen, font):
         "[SPACE] Pause/Resume",
         "[,/.] Speed Down/Up",
         "[P] Toggle Pheromones",
+        "[N] Neural Network UI",
         "[R] Reset Colony",
         "[M] New Maze",
         "[G] Toggle Grid",
@@ -65,6 +67,7 @@ def main():
     show_pheromones = False
     show_hints = False
     show_grid = True
+    show_neural_ui = True  # Neural network visualization
     
     # Simulation speed (1 = normal, higher = faster)
     sim_speed = 1
@@ -73,6 +76,9 @@ def main():
     
     # Debug system
     debug = DebugSystem(width, height)
+    
+    # Stats/Neural UI
+    stats_ui = StatsUI(width, height)
     
     # Fonts
     hint_font = pygame.font.Font(None, 20)
@@ -130,6 +136,9 @@ def main():
                 elif event.key == pygame.K_COMMA:  # , to slow down
                     speed_index = max(speed_index - 1, 0)
                     sim_speed = speed_levels[speed_index]
+                elif event.key == pygame.K_n:  # N to toggle neural UI
+                    show_neural_ui = stats_ui.toggle()
+                    print(f"Neural UI: {'ON' if show_neural_ui else 'OFF'}")
                 elif event.key == pygame.K_m:  # M to regenerate maze
                     from src.walls import WallManager
                     colony.wall_manager = WallManager(
@@ -157,6 +166,10 @@ def main():
             updates = int(sim_speed) if sim_speed >= 1 else 1
             for _ in range(updates):
                 colony.update()
+            
+            # Update stats UI with colony brain data
+            if show_neural_ui:
+                stats_ui.update(colony.colony_brain)
         
         # Render
         screen.fill(DARK_BG_COLOR)
@@ -174,19 +187,24 @@ def main():
         # Draw debug overlays
         debug.draw(screen, colony, mouse_pos)
         
-        # Draw hint toggle or full hints
+        # Draw neural network / stats UI overlay
+        if show_neural_ui:
+            stats_ui.draw(screen)
+        
+        # Draw hint toggle or full hints (offset down if neural UI is shown)
+        hint_y = 220 if show_neural_ui else 15
         if show_hints:
             draw_keybind_hints(screen, hint_font)
         else:
-            hint_text = small_font.render("[H] Keybinds", True, (120, 120, 130))
-            screen.blit(hint_text, (15, 15))
+            hint_text = small_font.render("[H] Keybinds  [N] Neural UI", True, (120, 120, 130))
+            screen.blit(hint_text, (15, hint_y))
         
         # Show paused indicator
         if not simulation_running:
             pause_text = hint_font.render("PAUSED", True, (255, 200, 100))
-            screen.blit(pause_text, (width // 2 - 30, 15))
+            screen.blit(pause_text, (width // 2 - 30, height - 30))
         
-        # Show speed indicator in top right
+        # Show speed indicator in bottom right
         if sim_speed == 1:
             speed_text = "1x"
             speed_color = (150, 150, 160)
@@ -197,7 +215,7 @@ def main():
             speed_text = f"{int(sim_speed)}x"
             speed_color = (255, 180, 100)  # Orange for fast
         speed_surface = hint_font.render(f"Speed: {speed_text}", True, speed_color)
-        screen.blit(speed_surface, (width - 100, 15))
+        screen.blit(speed_surface, (width - 100, height - 30))
         
         pygame.display.flip()
         # Adjust tick rate for slow motion

@@ -6,11 +6,13 @@ import random
 import os
 from enum import Enum
 from src.config import (
-    GRID_SIZE, ANT_SMELL_RANGE, ANT_SMELL_RANGE_SQ, ANT_SMELL_STRENGTH, ANT_WANDER_TURN_RATE,
+    ANT_SMELL_RANGE, ANT_SMELL_RANGE_SQ, ANT_SMELL_STRENGTH, ANT_WANDER_TURN_RATE,
     ANT_FOOD_PICKUP_RANGE_SQ, ANT_COLONY_DROPOFF_RANGE_SQ, ANT_REPULSION_RADIUS_SQ,
-    STUCK_CHECK_INTERVAL, STUCK_MIN_MOVEMENT_SQ, MAX_ESCAPE_ATTEMPTS, WALL_STUCK_DEATH_TIME
+    STUCK_CHECK_INTERVAL, STUCK_MIN_MOVEMENT_SQ, MAX_ESCAPE_ATTEMPTS
 )
 from src.pheromone_model import PheromoneType
+from src.neural_net import AntBrain
+from src.vision import AntVision
 
 # Pheromone deposit amount
 PHEROMONE_DEPOSIT = 8.0
@@ -69,9 +71,16 @@ DEFAULT_ENERGY_EFFICIENCY = 0.01
 
 
 class Ant:
-    """Individual ant agent with AI behavior"""
+    """Individual ant agent with AI behavior and ray-based vision"""
+    
+    # Class-level ID counter for unique ant IDs
+    _next_id = 0
     
     def __init__(self, x, y, colony):
+        # Unique ID for this ant (used in vision system to exclude self)
+        self.id = Ant._next_id
+        Ant._next_id += 1
+        
         self.x = x
         self.y = y
         self.colony = colony
@@ -118,6 +127,14 @@ class Ant:
         self.checkpoint_x = x
         self.checkpoint_y = y
         self.stuck_escape_count = 0         # Track how many times we've tried to escape
+        
+        # Neural network brain for path optimization
+        self.brain = None  # Set by colony when spawned
+        self.use_neural_net = True  # Toggle for neural net vs classic behavior
+        self.time_alive = 0  # Track lifetime for fitness calculation
+        
+        # Ray-based vision system
+        self.vision = AntVision()
         
     def update(self, pheromone_map, width, height, food_sources, colony_pos, other_ants=None, bounds=None):
         """Update ant behavior each frame"""
@@ -185,7 +202,7 @@ class Ant:
         
         # State-based behavior
         if self.state == AntState.FORAGING:
-            self._forage(pheromone_map, width, height, food_sources, colony_pos)
+            self._forage(pheromone_map, width, height, food_sources, colony_pos, other_ants)
         elif self.state == AntState.RETURNING:
             self._return_to_colony(pheromone_map, colony_pos)
         elif self.state == AntState.IDLE:
@@ -278,7 +295,86 @@ class Ant:
                 angle_away = math.atan2(dy, dx)
                 self.direction = self.direction * (1 - repel_strength) + angle_away * repel_strength
     
-    def _forage(self, pheromone_map, width, height, food_sources, colony_pos):
+    def _get_neural_inputs(self, pheromone_map, food_sources, colony_pos, other_ants=None):
+        """
+        Gather sensory inputs for neural network using ray-based vision.
+        Returns vision inputs (21) + state inputs (6) = 27 total inputs.
+        """
+        # Get wall manager for ray casting
+        wall_manager = getattr(self.colony, 'wall_manager', None)
+        
+        # Cast vision rays to detect walls, ants, and food
+        self.vision.cast_rays(
+            self.x, self.y, self.direction,
+            wall_manager,
+            other_ants or [],
+            food_sources,
+            self.id
+        )
+        
+        # Get 21 vision inputs (7 rays × 3 object types)
+        vision_inputs = self.vision.get_neural_inputs()
+        
+        # Sample pheromones in forward direction
+        sample_dist = 30
+        ahead_x = self.x + math.cos(self.direction) * sample_dist
+        ahead_y = self.y + math.sin(self.direction) * sample_dist
+        food_pher_ahead = pheromone_map.get_strength(ahead_x, ahead_y, PheromoneType.FOOD_TRAIL)
+        home_pher_ahead = pheromone_map.get_strength(ahead_x, ahead_y, PheromoneType.HOME_TRAIL)
+        
+        # Colony direction relative to heading
+        colony_direction = self._get_direction_to(colony_pos[0], colony_pos[1]) - self.direction
+        while colony_direction > math.pi:
+            colony_direction -= 2 * math.pi
+        while colony_direction < -math.pi:
+            colony_direction += 2 * math.pi
+        
+        # Colony distance
+        colony_distance = math.sqrt((self.x - colony_pos[0])**2 + (self.y - colony_pos[1])**2)
+        
+        return {
+            'vision_inputs': vision_inputs,
+            'food_pher_ahead': food_pher_ahead,
+            'home_pher_ahead': home_pher_ahead,
+            'colony_distance': colony_distance,
+            'colony_direction': colony_direction,
+            'carrying_food': self.carrying_food,
+            'energy': self.energy
+        }
+    
+    def _apply_neural_decision(self, pheromone_map, food_sources, colony_pos, other_ants=None):
+        """
+        Use neural network with ray-based vision to make movement decision.
+        Returns True if neural net handled the decision.
+        """
+        if self.brain is None or not self.use_neural_net:
+            return False
+        
+        # Get sensory inputs (includes ray vision)
+        inputs = self._get_neural_inputs(pheromone_map, food_sources, colony_pos, other_ants)
+        
+        # Get neural network decision using vision inputs
+        turn_angle, speed_mod, exploration = self.brain.decide(
+            vision_inputs=inputs['vision_inputs'],
+            food_pheromone_ahead=inputs['food_pher_ahead'],
+            home_pheromone_ahead=inputs['home_pher_ahead'],
+            colony_distance=inputs['colony_distance'],
+            colony_direction=inputs['colony_direction'],
+            carrying_food=inputs['carrying_food'],
+            energy=inputs['energy']
+        )
+        
+        # Apply neural network output - let NN fully control movement
+        self.direction += turn_angle * 0.6  # Strong influence from NN
+        self.speed = DEFAULT_SPEED * speed_mod
+        
+        # Add small randomness based on exploration tendency
+        if random.random() > exploration:
+            self.direction += random.uniform(-ANT_WANDER_TURN_RATE * 0.3, ANT_WANDER_TURN_RATE * 0.3)
+        
+        return True
+
+    def _forage(self, pheromone_map, width, height, food_sources, colony_pos, other_ants=None):
         """
         FORAGING STATE: Ant is looking for food
         - Priority 1: Pick up food if touching it
@@ -357,7 +453,7 @@ class Ant:
                     self.direction += random.uniform(-0.1, 0.1)
                     return
         
-        # PRIORITY 4: No trail or near colony - wander to explore
+        # PRIORITY 4: No trail or near colony - use neural network or wander
         # Add outward bias when near colony to encourage spreading
         colony_dist_sq = (self.x - colony_pos[0])**2 + (self.y - colony_pos[1])**2
         if colony_dist_sq < 62500:  # 250^2
@@ -371,7 +467,11 @@ class Ant:
                 angle_diff += 2 * math.pi
             self.direction += angle_diff * bias
         
-        self.direction += random.uniform(-ANT_WANDER_TURN_RATE, ANT_WANDER_TURN_RATE)
+        # Use neural network for wandering decisions if available
+        if self.brain is not None and self.use_neural_net:
+            self._apply_neural_decision(pheromone_map, food_sources, colony_pos, other_ants)
+        else:
+            self.direction += random.uniform(-ANT_WANDER_TURN_RATE, ANT_WANDER_TURN_RATE)
     
     def _return_to_colony(self, pheromone_map, colony_pos):
         """
@@ -415,49 +515,15 @@ class Ant:
             self.direction += random.uniform(-0.2, 0.2)
     
     def _move(self, width, height, pheromone_map):
-        """Move ant in current direction with proactive wall avoidance"""
-        # Track consecutive stuck frames
+        """Move ant - neural network handles wall avoidance via sensors"""
+        # Track consecutive stuck frames for general stuck detection
         if not hasattr(self, 'stuck_counter'):
             self.stuck_counter = 0
-        if not hasattr(self, 'wall_stuck_time'):
-            self.wall_stuck_time = 0
         
-        # Check if currently inside a wall
-        inside_wall = False
-        if hasattr(self.colony, 'wall_manager'):
-            inside_wall, _ = self.colony.wall_manager.is_colliding(self.x, self.y, self.radius * 0.5)
-        
-        # Track wall stuck time - if inside wall too long, mark for death
-        if inside_wall:
-            self.wall_stuck_time += 1
-            if self.wall_stuck_time > WALL_STUCK_DEATH_TIME:
-                self.alive = False  # Kill the ant
-                return
-            # Try aggressive push out
-            self.x, self.y = self.colony.wall_manager.push_out_of_wall(self.x, self.y, self.radius)
-        else:
-            self.wall_stuck_time = 0  # Reset if not in wall
-        
-        # General stuck detection and escape mechanism
-        if self.stuck_counter > 30:
-            self.direction = random.uniform(0, 2 * math.pi)  # Random new direction
+        # General stuck detection - if stuck too long, try random direction
+        if self.stuck_counter > 60:
+            self.direction = random.uniform(0, 2 * math.pi)
             self.stuck_counter = 0
-            # Push out of wall if inside
-            if hasattr(self.colony, 'wall_manager'):
-                self.x, self.y = self.colony.wall_manager.push_out_of_wall(self.x, self.y, self.radius)
-        
-        # PROACTIVE WALL AVOIDANCE - "see" walls ahead and turn before hitting
-        if hasattr(self.colony, 'wall_manager'):
-            should_turn, turn_amount = self.colony.wall_manager.get_avoidance_direction(
-                self.x, self.y, self.direction, look_range=80
-            )
-            if should_turn:
-                self.direction += turn_amount
-        
-        # DANGER PHEROMONE AVOIDANCE - avoid areas where ants have died
-        should_avoid, avoid_turn = pheromone_map.get_danger_avoidance(self.x, self.y, self.direction)
-        if should_avoid:
-            self.direction += avoid_turn
         
         # Smooth direction changes with momentum
         momentum = 0.7
@@ -465,7 +531,7 @@ class Ant:
         self.previous_direction = self.direction
         
         # Add small random jitter to prevent oscillation
-        self.direction += random.uniform(-0.05, 0.05)
+        self.direction += random.uniform(-0.03, 0.03)
         
         # Calculate movement
         dx = math.cos(self.direction) * self.speed
@@ -474,21 +540,12 @@ class Ant:
         new_x = self.x + dx
         new_y = self.y + dy
         
-        # Check collision with walls - if about to enter, stop and turn
+        # WALL COLLISION = DEATH (Neural network must learn to avoid walls)
         if hasattr(self.colony, 'wall_manager'):
-            colliding, wall = self.colony.wall_manager.is_colliding(new_x, new_y, self.radius)
+            colliding, _ = self.colony.wall_manager.is_colliding(new_x, new_y, self.radius)
             if colliding:
-                # Push out if inside
-                new_x, new_y = self.colony.wall_manager.push_out_of_wall(new_x, new_y, self.radius)
-                # Turn perpendicular to wall
-                wall_center_x = wall.rect.centerx
-                wall_center_y = wall.rect.centery
-                away_angle = math.atan2(self.y - wall_center_y, self.x - wall_center_x)
-                self.direction = away_angle + random.uniform(-0.5, 0.5)
-                self.stuck_counter += 2
-                # Don't move into wall
-                new_x = self.x
-                new_y = self.y
+                self.alive = False  # Die on wall collision - NN must learn to avoid
+                return
         
         # Update position
         self.x = new_x
@@ -503,21 +560,21 @@ class Ant:
         else:
             self.stuck_counter = max(0, self.stuck_counter - 1)  # Recover if moving
         
-        # Hard clamp to bounds
+        # Hard clamp to bounds (screen edges)
         if hasattr(self, 'bounds') and self.bounds:
             if self.x <= self.bounds.left:
                 self.x = self.bounds.left + 2
-                self.direction = random.uniform(-math.pi/2, math.pi/2)  # Face right
+                self.direction = random.uniform(-math.pi/2, math.pi/2)
             elif self.x >= self.bounds.right:
                 self.x = self.bounds.right - 2
-                self.direction = random.uniform(math.pi/2, 3*math.pi/2)  # Face left
+                self.direction = random.uniform(math.pi/2, 3*math.pi/2)
             
             if self.y <= self.bounds.top:
                 self.y = self.bounds.top + 2
-                self.direction = random.uniform(-math.pi/2, math.pi/2)  # Random bounce downward
+                self.direction = random.uniform(0, math.pi)
             elif self.y >= self.bounds.bottom:
                 self.y = self.bounds.bottom - 2
-                self.direction = random.uniform(math.pi/2, 3*math.pi/2)  # Random bounce upward
+                self.direction = random.uniform(-math.pi, 0)
     
     def _get_direction_to(self, target_x, target_y):
         """Calculate direction vector to target"""

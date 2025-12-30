@@ -9,6 +9,7 @@ from src.pheromone_model import PheromoneModel
 from src.save_state import load_colony_state, apply_saved_state_to_colony
 from src.walls import WallManager
 from src.config import INITIAL_ANT_COUNT, MAX_POPULATION, DEATH_MARKER_DURATION, MAX_DEATH_MARKERS
+from src.colony_brain import ColonyBrain
 
 # Load death marker sprite
 _death_marker_sprite = None
@@ -88,6 +89,12 @@ class Colony:
         self.death_markers = deque(maxlen=MAX_DEATH_MARKERS)
         self.death_marker_duration = DEATH_MARKER_DURATION
         
+        # Colony brain for neural network evolution
+        self.colony_brain = ColonyBrain(INITIAL_ANT_COUNT)
+        self.food_collected_this_frame = 0  # Track for stats
+        self.generation_timer = 0
+        self.generation_interval = 60 * 30  # Evolve every 30 seconds
+        
         # Load saved state if available
         saved_state = load_colony_state()
         if saved_state:
@@ -108,7 +115,10 @@ class Colony:
                 dist = random.uniform(0, self.radius + 10)
                 x = self.x + dist * __import__('math').cos(angle)
                 y = self.y + dist * __import__('math').sin(angle)
-            self.ants.append(Ant(x, y, self))
+            ant = Ant(x, y, self)
+            # Assign neural network brain from colony brain
+            ant.brain = self.colony_brain.create_brain()
+            self.ants.append(ant)
             self.population += 1
     
     def _is_valid_food_position(self, x, y, margin=20):
@@ -169,6 +179,8 @@ class Colony:
             y = self.y + dist * __import__('math').sin(angle)
             
             new_ant = Ant(x, y, self)
+            # Assign neural network brain from colony brain
+            new_ant.brain = self.colony_brain.create_brain()
             self.ants.append(new_ant)
             self.population += 1
             self.food_stored -= 20  # Cost to create ant
@@ -176,6 +188,7 @@ class Colony:
     def update(self):
         """Update colony state"""
         self.time += 1
+        self.food_collected_this_frame = 0
         
         # Update pheromones
         self.pheromone_map.update()
@@ -183,17 +196,39 @@ class Colony:
         # Update ants
         dead_ants = []
         for i, ant in enumerate(self.ants):
+            # Track ant's time alive
+            ant.time_alive = getattr(ant, 'time_alive', 0) + 1
+            
+            # Track food collection for neural network fitness
+            food_before = ant.food_collected
+            
             if not ant.update(self.pheromone_map, self.width, self.height, self.food_sources, (self.x, self.y), self.ants, self.bounds):
-                dead_ants.append((i, ant.x, ant.y))  # Track position of death
+                dead_ants.append((i, ant))  # Track full ant object for brain reporting
+            else:
+                # Check if ant collected food this frame
+                if ant.food_collected > food_before:
+                    self.food_collected_this_frame += 1
+                    # Reward brain for finding food
+                    if ant.brain:
+                        ant.brain.add_fitness(10)
         
         # Remove dead ants and add death markers
-        for i, x, y in reversed(dead_ants):
+        for i, ant in reversed(dead_ants):
+            # Report ant performance to colony brain before removing
+            if ant.brain:
+                self.colony_brain.report_ant_performance(
+                    ant.brain, 
+                    ant.food_collected,
+                    ant.successful_trips,
+                    ant.time_alive
+                )
+            
             self.ants.pop(i)
             self.population -= 1
             # Add death marker at ant's position
-            self.death_markers.append([x, y, self.death_marker_duration])
+            self.death_markers.append([ant.x, ant.y, self.death_marker_duration])
             # Deposit danger pheromone where ant died
-            self.pheromone_map.deposit_danger(x, y, 150)
+            self.pheromone_map.deposit_danger(ant.x, ant.y, 150)
         
         # Update death markers (count down and remove expired)
         # Decrement all markers and filter expired ones efficiently
@@ -203,6 +238,15 @@ class Colony:
             if marker[2] > 0:
                 updated_markers.append(marker)
         self.death_markers = updated_markers
+        
+        # Update colony brain with current state
+        self.colony_brain.update(self.ants, self.food_collected_this_frame)
+        
+        # Evolve generation periodically
+        self.generation_timer += 1
+        if self.generation_timer >= self.generation_interval:
+            self.colony_brain.evolve_generation()
+            self.generation_timer = 0
         
         # Consume food for remaining population
         self.consume_food()
