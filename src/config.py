@@ -33,7 +33,7 @@ UI_BORDER_WIDTH = 1
 FPS = 60
 
 # Simulation settings
-INITIAL_ANT_COUNT = 1          # Number of ants to start with
+INITIAL_ANT_COUNT = 100          # Number of ants to start with
 MAX_POPULATION = 500            # Maximum ant population
 
 # Ant senses
@@ -41,11 +41,7 @@ ANT_SMELL_RANGE = 150           # How far ants can smell food (pixels)
 ANT_SMELL_STRENGTH = 0.8        # How strongly ants are drawn to food scent (0-1)
 ANT_WANDER_TURN_RATE = 0.15     # How much ants turn when wandering (radians)
 
-# Pheromone settings
-PHEROMONE_EVAPORATION = 0.996   # ~15 seconds at 60 FPS (closer to 1 = slower fade)
-PHEROMONE_MAX = 300.0           # Maximum pheromone strength per cell
-PHEROMONE_DEPOSIT = 5.0         # Base amount deposited per step
-PHEROMONE_THRESHOLD = 10        # Minimum strength to detect/follow
+# Pheromone settings are now in src/pheromone_model.py
 
 # =====================
 # REAL-TIME ADJUSTABLE PARAMETERS

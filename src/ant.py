@@ -5,8 +5,12 @@ import math
 import random
 import os
 from enum import Enum
-from src.config import GRID_SIZE, runtime, ANT_SMELL_RANGE, ANT_SMELL_STRENGTH, ANT_WANDER_TURN_RATE, PHEROMONE_DEPOSIT
+from src.config import GRID_SIZE, runtime, ANT_SMELL_RANGE, ANT_SMELL_STRENGTH, ANT_WANDER_TURN_RATE
 from src.genetics import AntGenes, FitnessTracker
+from src.pheromone_model import PheromoneType
+
+# Pheromone deposit amount
+PHEROMONE_DEPOSIT = 8.0
 
 # Load ant sprite once at module level
 _ant_sprite = None
@@ -49,10 +53,10 @@ def _load_ant_sprites():
     _ant_sprite_carrying.fill((100, 255, 150, 255), special_flags=pygame.BLEND_RGBA_MULT)
 
 class AntState(Enum):
-    """Ant behavior states"""
-    FORAGING = 1
-    RETURNING = 2
-    IDLE = 3
+    """Ant behavior states - determines which pheromone to follow"""
+    FORAGING = 1    # Looking for food - follow GREEN (food trail) pheromone
+    RETURNING = 2   # Carrying food home - follow BLUE (home trail) pheromone
+    IDLE = 3        # Resting at colony
 
 class Ant:
     """Individual ant agent with AI behavior"""
@@ -69,12 +73,17 @@ class Ant:
         self.fitness = FitnessTracker()
         self.generation = 0
         
-        # AI state
-        self.state = AntState.FORAGING
+        # ANT STATUS SYSTEM
+        self.state = AntState.FORAGING  # Current behavior mode
+        self.carrying_food = False       # Has food to carry
+        self.food_amount = 0             # Amount of food carrying
+        self.knows_food_location = False # Has found food before
+        self.last_food_x = None          # Remember where food was
+        self.last_food_y = None
+        
+        # Energy
         self.energy = 100
         self.max_energy = 100
-        self.carrying_food = False
-        self.food_amount = 0
         
         # Movement
         self.speed = self.genes.speed
@@ -90,7 +99,7 @@ class Ant:
         
         # Visual trail for pheromone effect
         self.trail = []  # List of (x, y, age) tuples
-        self.max_trail_length = 60  # Increased from 30
+        self.max_trail_length = 60
         self.trail_update_counter = 0
         
     def update(self, pheromone_map, width, height, food_sources, colony_pos, other_ants=None, bounds=None):
@@ -156,11 +165,22 @@ class Ant:
         # Remove very old trail points
         self.trail = [point for point in self.trail if point[2] < self.max_trail_length * 5]  # 5x max length
         
-        # Deposit pheromone when returning with food (stronger trail to food source)
-        if self.state == AntState.RETURNING and self.carrying_food and self.deposit_cooldown == 0:
-            # Deposit strong "food trail" pheromone for other ants to follow
-            pheromone_map.deposit_pheromone(self.x, self.y, PHEROMONE_DEPOSIT * self.genes.pheromone_strength, self.state)
-            self.deposit_cooldown = 2  # Deposit frequently for solid trail
+        # DUAL PHEROMONE SYSTEM:
+        # - HOME_TRAIL (BLUE): deposited when foraging (marks path back to colony)
+        # - FOOD_TRAIL (GREEN): deposited when returning with food (marks path to food)
+        colony_dist = math.sqrt((self.x - colony_pos[0])**2 + (self.y - colony_pos[1])**2)
+        
+        if self.deposit_cooldown == 0:
+            if self.state == AntState.RETURNING and self.carrying_food:
+                # FOOD_TRAIL (GREEN) - tells others where food is
+                if colony_dist > 50:
+                    pheromone_map.deposit_food_trail(self.x, self.y, PHEROMONE_DEPOSIT * self.genes.pheromone_strength)
+                    self.deposit_cooldown = 2
+            elif self.state == AntState.FORAGING:
+                # HOME_TRAIL (BLUE) - marks path back to colony
+                if colony_dist > 50:
+                    pheromone_map.deposit_home_trail(self.x, self.y, PHEROMONE_DEPOSIT * self.genes.pheromone_strength)
+                    self.deposit_cooldown = 2
         
         return True
     
@@ -216,8 +236,14 @@ class Ant:
                 self.direction = self.direction * (1 - repel_strength) + angle_away * repel_strength
     
     def _forage(self, pheromone_map, width, height, food_sources, colony_pos):
-        """Foraging behavior - use smell to find food"""
-        # Check if ant is touching food (pickup range)
+        """
+        FORAGING STATE: Ant is looking for food
+        - Priority 1: Pick up food if touching it
+        - Priority 2: Smell food directly (within range)
+        - Priority 3: Follow GREEN pheromone trail (food trail from returning ants)
+        - Priority 4: Wander randomly to explore
+        """
+        # PRIORITY 1: Check if ant is touching food (pickup range)
         for food in food_sources:
             dist = math.sqrt((self.x - food.x)**2 + (self.y - food.y)**2)
             if dist < 15 and food.amount > 0:
@@ -225,15 +251,22 @@ class Ant:
                 food.amount -= 1
                 self.carrying_food = True
                 self.food_amount = 1
-                self.state = AntState.RETURNING
+                self.state = AntState.RETURNING  # SWITCH STATE
+                
+                # Remember food location
+                self.knows_food_location = True
+                self.last_food_x = food.x
+                self.last_food_y = food.y
+                
+                # Turn toward colony
                 self.direction = self._get_direction_to(colony_pos[0], colony_pos[1])
                 
-                # LEARNING INCENTIVE: Track how fast ant found food
+                # Fitness tracking
                 self.fitness.food_discovery_time += self.time_since_food
-                self.time_since_food = 0  # Reset timer
+                self.time_since_food = 0
                 return
         
-        # SMELL SYSTEM: Detect food within smell range
+        # PRIORITY 2: Smell food directly within range
         closest_food = None
         closest_dist = ANT_SMELL_RANGE
         
@@ -246,49 +279,64 @@ class Ant:
                 closest_food = food
         
         if closest_food:
-            # Ant can smell food - move toward it
+            # Ant smells food - move toward it
             food_direction = self._get_direction_to(closest_food.x, closest_food.y)
-            
-            # Stronger attraction when closer (smell gets stronger)
             smell_intensity = 1.0 - (closest_dist / ANT_SMELL_RANGE)
             blend_factor = ANT_SMELL_STRENGTH * smell_intensity
             
-            # Smoothly turn toward food
             angle_diff = food_direction - self.direction
-            # Normalize angle difference to [-pi, pi]
             while angle_diff > math.pi:
                 angle_diff -= 2 * math.pi
             while angle_diff < -math.pi:
                 angle_diff += 2 * math.pi
             
             self.direction += angle_diff * blend_factor
-            # Add slight wobble for natural movement
             self.direction += random.uniform(-0.05, 0.05)
             return
         
-        # No food in smell range - follow RETURNING pheromone trail (leads to food!)
-        # Ants deposit pheromone when returning, so following that trail leads to food
-        nearby_pheromone = pheromone_map.get_pheromone_direction(
-            self.x, self.y, AntState.RETURNING, self.direction  # Follow RETURNING trail
-        )
+        # Check distance from colony - don't follow pheromones near colony (prevents clustering)
+        colony_dist = math.sqrt((self.x - colony_pos[0])**2 + (self.y - colony_pos[1])**2)
         
-        if nearby_pheromone is not None:
-            # Follow pheromone trail to food source
-            angle_diff = nearby_pheromone - self.direction
+        # PRIORITY 3: Follow GREEN pheromone (food trail) - only far from colony
+        if colony_dist > 150:  # Only follow trails when well away from colony
+            food_trail = pheromone_map.get_food_trail_direction(self.x, self.y, self.direction)
+            
+            if food_trail is not None:
+                # Follow the food trail (deposited by ants returning with food)
+                angle_diff = food_trail - self.direction
+                while angle_diff > math.pi:
+                    angle_diff -= 2 * math.pi
+                while angle_diff < -math.pi:
+                    angle_diff += 2 * math.pi
+                
+                # Only follow if it's roughly forward (not a U-turn)
+                if abs(angle_diff) < math.pi * 0.6:
+                    self.direction += angle_diff * 0.25 * self.genes.pheromone_sensitivity
+                    self.direction += random.uniform(-0.1, 0.1)
+                    return
+        
+        # PRIORITY 4: No trail or near colony - wander to explore
+        # Add outward bias when near colony to encourage spreading
+        if colony_dist < 250:
+            outward_dir = math.atan2(self.y - colony_pos[1], self.x - colony_pos[0])
+            bias = (250 - colony_dist) / 250 * 0.2  # Stronger when closer
+            angle_diff = outward_dir - self.direction
             while angle_diff > math.pi:
                 angle_diff -= 2 * math.pi
             while angle_diff < -math.pi:
                 angle_diff += 2 * math.pi
-            # Smooth turn toward trail
-            self.direction += angle_diff * 0.4 * self.genes.pheromone_sensitivity
-            self.direction += random.uniform(-0.05, 0.05)  # Slight wobble
-        else:
-            # No trail detected - wander to explore
-            self.direction += random.uniform(-ANT_WANDER_TURN_RATE, ANT_WANDER_TURN_RATE)
+            self.direction += angle_diff * bias
+        
+        self.direction += random.uniform(-ANT_WANDER_TURN_RATE, ANT_WANDER_TURN_RATE)
     
     def _return_to_colony(self, pheromone_map, colony_pos):
-        """Returning behavior - head directly back to colony"""
-        # Check if reached colony
+        """
+        RETURNING STATE: Ant is carrying food back to colony
+        - Priority 1: Drop food if at colony
+        - Priority 2: Follow BLUE pheromone trail (home trail from foraging ants)
+        - Priority 3: Head directly toward colony (ants know where home is)
+        """
+        # PRIORITY 1: Check if reached colony
         dist = math.sqrt((self.x - colony_pos[0])**2 + (self.y - colony_pos[1])**2)
         if dist < 25:
             # Drop food at colony
@@ -298,23 +346,21 @@ class Ant:
             self.carrying_food = False
             self.food_amount = 0
             self.energy = min(self.energy + 20, self.max_energy)
-            self.state = AntState.FORAGING
-            # Turn around to go back out
-            self.direction += math.pi + random.uniform(-0.5, 0.5)
+            self.state = AntState.FORAGING  # SWITCH STATE
+            
+            # Turn around to go back out foraging - spread out more
+            self.direction += math.pi + random.uniform(-0.8, 0.8)
             return
         
-        # Head directly toward colony (ant knows where home is)
+        # PRIORITY 2: Head directly toward colony (ants know where home is)
+        # This is more reliable than following trails when returning
         target_direction = self._get_direction_to(colony_pos[0], colony_pos[1])
-        
-        # Smooth turning toward colony
         angle_diff = target_direction - self.direction
         while angle_diff > math.pi:
             angle_diff -= 2 * math.pi
         while angle_diff < -math.pi:
             angle_diff += 2 * math.pi
-        
-        # Turn toward colony with slight wobble
-        self.direction += angle_diff * 0.3
+        self.direction += angle_diff * 0.4
         self.direction += random.uniform(-0.05, 0.05)
     
     def _idle_behavior(self):

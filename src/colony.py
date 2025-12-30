@@ -3,7 +3,7 @@
 import pygame
 import random
 from src.ant import Ant, AntState
-from src.pheromone import PheromoneMap
+from src.pheromone_model import PheromoneModel
 from src.genetics import AntGenes
 from src.save_state import load_colony_state, apply_saved_state_to_colony
 from src.walls import WallManager
@@ -62,8 +62,8 @@ class Colony:
         # Ants
         self.ants = []
         
-        # Simulation
-        self.pheromone_map = PheromoneMap(width, height)
+        # Simulation - use new PheromoneModel
+        self.pheromone_map = PheromoneModel(width, height)
         self.food_sources = []
         self.time = 0
         
@@ -203,9 +203,9 @@ class Colony:
         if view_rect is None:
             view_rect = surface.get_rect()
         
-        # Draw pheromones (background) - focus on food trails
+        # Draw pheromones (background) - show both trails
         if show_pheromones:
-            self.pheromone_map.draw(surface, show_foraging=False, show_returning=True, opacity=150)
+            self.pheromone_map.draw(surface, show_food=True, show_home=True, opacity=180)
         
         # Draw walls
         self.wall_manager.draw(surface)
