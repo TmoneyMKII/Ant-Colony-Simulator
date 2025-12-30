@@ -6,7 +6,6 @@ import random
 import os
 from enum import Enum
 from src.config import GRID_SIZE, runtime, ANT_SMELL_RANGE, ANT_SMELL_STRENGTH, ANT_WANDER_TURN_RATE
-from src.genetics import AntGenes, FitnessTracker
 from src.pheromone_model import PheromoneType
 
 # Pheromone deposit amount
@@ -58,20 +57,22 @@ class AntState(Enum):
     RETURNING = 2   # Carrying food home - follow BLUE (home trail) pheromone
     IDLE = 3        # Resting at colony
 
+# Default ant attributes (fixed values instead of genetics)
+DEFAULT_SPEED = 2.0
+DEFAULT_PHEROMONE_SENSITIVITY = 0.15
+DEFAULT_PHEROMONE_STRENGTH = 1.5
+DEFAULT_ENERGY_EFFICIENCY = 0.01
+
+
 class Ant:
     """Individual ant agent with AI behavior"""
     
-    def __init__(self, x, y, colony, genes=None):
+    def __init__(self, x, y, colony):
         self.x = x
         self.y = y
         self.colony = colony
         self.radius = 6
         self.color = (220, 120, 180)
-        
-        # Genetic traits
-        self.genes = genes if genes else AntGenes()
-        self.fitness = FitnessTracker()
-        self.generation = 0
         
         # ANT STATUS SYSTEM
         self.state = AntState.FORAGING  # Current behavior mode
@@ -85,17 +86,22 @@ class Ant:
         self.energy = 100
         self.max_energy = 100
         
-        # Movement
-        self.speed = self.genes.speed
+        # Movement (fixed values)
+        self.speed = DEFAULT_SPEED
         self.direction = random.uniform(0, 2 * math.pi)
         self.previous_direction = self.direction
         self.target_x = None
         self.target_y = None
         
-        # Pheromone tracking
-        self.pheromone_strength = self.genes.pheromone_strength
+        # Pheromone tracking (fixed values)
+        self.pheromone_strength = DEFAULT_PHEROMONE_STRENGTH
+        self.pheromone_sensitivity = DEFAULT_PHEROMONE_SENSITIVITY
         self.can_deposit = True
         self.deposit_cooldown = 0
+        
+        # Simple stats tracking
+        self.food_collected = 0
+        self.successful_trips = 0
         
         # Visual trail for pheromone effect
         self.trail = []  # List of (x, y, age) tuples
@@ -104,10 +110,8 @@ class Ant:
         
     def update(self, pheromone_map, width, height, food_sources, colony_pos, other_ants=None, bounds=None):
         """Update ant behavior each frame"""
-        energy_cost = self.genes.energy_efficiency
+        energy_cost = DEFAULT_ENERGY_EFFICIENCY
         self.energy -= energy_cost
-        self.fitness.energy_spent += energy_cost
-        self.fitness.lifetime += 1
         
         # Track time since last food (for speed bonus)
         if hasattr(self, 'time_since_food'):
@@ -174,12 +178,12 @@ class Ant:
             if self.state == AntState.RETURNING and self.carrying_food:
                 # FOOD_TRAIL (GREEN) - tells others where food is
                 if colony_dist > 50:
-                    pheromone_map.deposit_food_trail(self.x, self.y, PHEROMONE_DEPOSIT * self.genes.pheromone_strength)
+                    pheromone_map.deposit_food_trail(self.x, self.y, PHEROMONE_DEPOSIT * self.pheromone_strength)
                     self.deposit_cooldown = 2
             elif self.state == AntState.FORAGING:
                 # HOME_TRAIL (BLUE) - marks path back to colony
                 if colony_dist > 50:
-                    pheromone_map.deposit_home_trail(self.x, self.y, PHEROMONE_DEPOSIT * self.genes.pheromone_strength)
+                    pheromone_map.deposit_home_trail(self.x, self.y, PHEROMONE_DEPOSIT * self.pheromone_strength)
                     self.deposit_cooldown = 2
         
         return True
@@ -261,8 +265,6 @@ class Ant:
                 # Turn toward colony
                 self.direction = self._get_direction_to(colony_pos[0], colony_pos[1])
                 
-                # Fitness tracking
-                self.fitness.food_discovery_time += self.time_since_food
                 self.time_since_food = 0
                 return
         
@@ -311,7 +313,7 @@ class Ant:
                 
                 # Only follow if it's roughly forward (not a U-turn)
                 if abs(angle_diff) < math.pi * 0.6:
-                    self.direction += angle_diff * 0.25 * self.genes.pheromone_sensitivity
+                    self.direction += angle_diff * 0.25 * self.pheromone_sensitivity
                     self.direction += random.uniform(-0.1, 0.1)
                     return
         
@@ -341,8 +343,8 @@ class Ant:
         if dist < 25:
             # Drop food at colony
             self.colony.add_food(self.food_amount)
-            self.fitness.food_collected += self.food_amount
-            self.fitness.successful_trips += 1
+            self.food_collected += self.food_amount
+            self.successful_trips += 1
             self.carrying_food = False
             self.food_amount = 0
             self.energy = min(self.energy + 20, self.max_energy)
@@ -417,9 +419,8 @@ class Ant:
         # Check collision with walls and BLOCK movement if hitting wall
         if hasattr(self.colony, 'wall_manager'):
             new_x, new_y = self.colony.wall_manager.get_avoid_position(self.x, self.y, new_x, new_y, radius=self.radius)
-            # If blocked, penalize and turn away - LEARNING INCENTIVE
+            # If blocked, turn away
             if new_x == self.x and new_y == self.y:
-                self.fitness.wall_hits += 1  # Penalty for hitting wall
                 self.energy -= 0.5           # Energy cost for collision
                 self.direction = random.uniform(0, 2 * math.pi)  # Complete random turn
                 self.stuck_counter += 5  # Big stuck penalty
@@ -428,13 +429,11 @@ class Ant:
         self.x = new_x
         self.y = new_y
         
-        # Track distance traveled - LEARNING INCENTIVE (reward exploration)
+        # Track distance traveled for stuck detection
         dist = math.sqrt((self.x - self.prev_x)**2 + (self.y - self.prev_y)**2)
-        self.fitness.distance_traveled += dist
         
-        # Check if stuck - LEARNING INCENTIVE (penalize staying still)
+        # Check if stuck
         if dist < 0.5:
-            self.fitness.time_stuck += 1
             self.stuck_counter += 1
         else:
             self.stuck_counter = max(0, self.stuck_counter - 1)  # Recover if moving

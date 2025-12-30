@@ -3,6 +3,7 @@ import sys
 from src.config import DARK_BG_COLOR, GRID_SIZE, GRID_COLOR
 from src.colony import Colony
 from src.save_state import save_colony_state, load_colony_state
+from src.debug import DebugSystem, DebugMode
 
 def draw_keybind_hints(screen, font):
     """Draw keybind hints overlay"""
@@ -11,6 +12,8 @@ def draw_keybind_hints(screen, font):
         "[P] Toggle Pheromones",
         "[R] Reset Colony",
         "[G] Toggle Grid",
+        "[D] Debug Mode",
+        "[1-5] Debug Levels",
         "[H] Hide Hints",
         "[ESC] Quit",
     ]
@@ -49,9 +52,7 @@ def main():
     # Check for loaded state
     saved_state = load_colony_state()
     if saved_state:
-        gen = saved_state.get('generation', 0)
-        pool_size = len(saved_state.get('gene_pool', []))
-        print(f"[LOADED] Generation {gen}, Gene Pool Size: {pool_size}")
+        print(f"[INFO] Previous save found")
     else:
         print("Starting new colony simulation...")
     
@@ -62,11 +63,16 @@ def main():
     show_hints = False
     show_grid = True
     
+    # Debug system
+    debug = DebugSystem(width, height)
+    
     # Fonts
     hint_font = pygame.font.Font(None, 20)
     small_font = pygame.font.Font(None, 18)
     
     while running:
+        mouse_pos = pygame.mouse.get_pos()
+        
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -77,20 +83,39 @@ def main():
                     simulation_running = not simulation_running
                     if not simulation_running:
                         save_colony_state(colony)
-                        print(f"Colony saved at generation {colony.generation}")
+                        print(f"Colony saved")
                 elif event.key == pygame.K_p:
                     show_pheromones = not show_pheromones
                 elif event.key == pygame.K_r:
                     save_colony_state(colony)
-                    print(f"Colony saved at generation {colony.generation}")
+                    print(f"Colony saved")
                     colony = Colony(sim_rect.centerx, sim_rect.centery, 
                                   sim_rect.width, sim_rect.height, 
                                   bounds=sim_rect)
                     simulation_running = True
+                    debug.total_food_deposits = 0
+                    debug.total_home_deposits = 0
+                    debug.food_collected_total = 0
+                    debug.trips_completed = 0
                 elif event.key == pygame.K_h:
                     show_hints = not show_hints
                 elif event.key == pygame.K_g:
                     show_grid = not show_grid
+                elif event.key == pygame.K_d:
+                    mode = debug.toggle()
+                    print(f"Debug mode: {mode.name}")
+                elif event.key == pygame.K_1:
+                    debug.set_mode(DebugMode.OFF)
+                elif event.key == pygame.K_2:
+                    debug.set_mode(DebugMode.STATS)
+                elif event.key == pygame.K_3:
+                    debug.set_mode(DebugMode.ANT_DETAILS)
+                elif event.key == pygame.K_4:
+                    debug.set_mode(DebugMode.PHEROMONE_DEBUG)
+                elif event.key == pygame.K_5:
+                    debug.set_mode(DebugMode.PATHFINDING)
+                elif event.key == pygame.K_6:
+                    debug.set_mode(DebugMode.FULL)
         
         # Update
         if simulation_running:
@@ -108,6 +133,9 @@ def main():
         
         # Draw colony
         colony.draw(screen, show_pheromones=show_pheromones)
+        
+        # Draw debug overlays
+        debug.draw(screen, colony, mouse_pos)
         
         # Draw hint toggle or full hints
         if show_hints:

@@ -4,7 +4,6 @@ import pygame
 import random
 from src.ant import Ant, AntState
 from src.pheromone_model import PheromoneModel
-from src.genetics import AntGenes
 from src.save_state import load_colony_state, apply_saved_state_to_colony
 from src.walls import WallManager
 from src.config import INITIAL_ANT_COUNT, MAX_POPULATION
@@ -52,12 +51,6 @@ class Colony:
         self.max_food = 10000
         self.population = 0
         self.max_population = MAX_POPULATION
-        
-        # Evolution tracking
-        self.generation = 0
-        self.best_fitness = 0
-        self.average_fitness = 0
-        self.gene_pool = []  # Store genes from successful ants
         
         # Ants
         self.ants = []
@@ -126,23 +119,14 @@ class Colony:
             return False
     
     def spawn_ant(self):
-        """Spawn a new ant with evolved genes"""
+        """Spawn a new ant"""
         if self.population < self.max_population and self.food_stored > 100:
             angle = random.uniform(0, 2 * 3.14159)
             dist = random.uniform(0, self.radius + 5)
             x = self.x + dist * __import__('math').cos(angle)
             y = self.y + dist * __import__('math').sin(angle)
             
-            # Breed from successful parents if available
-            genes = None
-            if len(self.gene_pool) >= 2:
-                parent1 = random.choice(self.gene_pool)
-                parent2 = random.choice(self.gene_pool)
-                genes = AntGenes(parent1, parent2)
-                self.generation += 1
-            
-            new_ant = Ant(x, y, self, genes)
-            new_ant.generation = self.generation
+            new_ant = Ant(x, y, self)
             self.ants.append(new_ant)
             self.population += 1
             self.food_stored -= 20  # Cost to create ant
@@ -158,14 +142,6 @@ class Colony:
         dead_ants = []
         for i, ant in enumerate(self.ants):
             if not ant.update(self.pheromone_map, self.width, self.height, self.food_sources, (self.x, self.y), self.ants, self.bounds):
-                # Store genes from successful ants
-                fitness = ant.fitness.calculate_fitness()
-                if fitness > 10:  # Minimum fitness threshold
-                    self.gene_pool.append(ant.genes.copy())
-                    # Keep only best genes (top 50)
-                    if len(self.gene_pool) > 50:
-                        self.gene_pool.sort(key=lambda g: self._estimate_gene_fitness(g), reverse=True)
-                        self.gene_pool = self.gene_pool[:50]
                 dead_ants.append(i)
         
         # Remove dead ants
@@ -224,18 +200,10 @@ class Colony:
         pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), self.radius)
         pygame.draw.circle(surface, (200, 150, 100), (int(self.x), int(self.y)), self.radius - 3, 2)
     
-    def _estimate_gene_fitness(self, genes):
-        """Rough fitness estimate for sorting genes"""
-        # Balance between speed and efficiency
-        return genes.speed * 10 + genes.pheromone_sensitivity * 50 - genes.energy_efficiency * 100
-    
     def get_stats(self):
         """Get colony statistics"""
-        # Calculate average fitness
-        if self.ants:
-            total_fitness = sum(ant.fitness.calculate_fitness() for ant in self.ants)
-            self.average_fitness = total_fitness / len(self.ants)
-            self.best_fitness = max(ant.fitness.calculate_fitness() for ant in self.ants)
+        total_food_collected = sum(ant.food_collected for ant in self.ants)
+        total_trips = sum(ant.successful_trips for ant in self.ants)
         
         return {
             'population': self.population,
@@ -243,8 +211,6 @@ class Colony:
             'ants_foraging': sum(1 for a in self.ants if a.state == AntState.FORAGING),
             'ants_returning': sum(1 for a in self.ants if a.state == AntState.RETURNING),
             'food_sources_active': sum(1 for f in self.food_sources if f.amount > 5),
-            'generation': self.generation,
-            'avg_fitness': self.average_fitness,
-            'best_fitness': self.best_fitness,
-            'gene_pool_size': len(self.gene_pool)
+            'total_food_collected': total_food_collected,
+            'total_trips': total_trips
         }

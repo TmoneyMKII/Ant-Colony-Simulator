@@ -2,12 +2,12 @@
 
 ## Architecture Overview
 
-**Pygame-based ant colony simulation** with emergent swarm intelligence through pheromones and genetic evolution.
+**Pygame-based ant colony simulation** with emergent swarm intelligence through pheromones.
 
 ```
-main.py (game loop) → Colony → Ants ↔ PheromoneMap
-                         ↓         ↘
-                    FoodSources    AntGenes/FitnessTracker
+main.py (game loop) → Colony → Ants ↔ PheromoneModel
+                         ↓
+                    FoodSources
 ```
 
 ## Project Structure
@@ -16,10 +16,10 @@ main.py (game loop) → Colony → Ants ↔ PheromoneMap
 ├── main.py              # Entry point, game loop, keyboard controls
 ├── src/
 │   ├── ant.py           # Ant behavior state machine (FORAGING→RETURNING→IDLE)
-│   ├── colony.py        # Colony management, spawning, evolution
+│   ├── colony.py        # Colony management, spawning
 │   ├── config.py        # Colors, constants, RuntimeParams
-│   ├── genetics.py      # 5 evolvable traits + fitness calculation
-│   ├── pheromone.py     # Grid-based chemical communication (20px cells)
+│   ├── debug.py         # Debug visualization system
+│   ├── pheromone_model.py # Dual pheromone system (food/home trails)
 │   ├── save_state.py    # JSON persistence to ant_saves/
 │   └── walls.py         # Obstacle system
 ├── ant_saves/           # Save files (auto-created)
@@ -28,17 +28,14 @@ main.py (game loop) → Colony → Ants ↔ PheromoneMap
 
 ## Key Patterns
 
-### Genetic Traits (src/genetics.py)
-All ant behavior is controlled by these 5 genes:
-| Trait | Range | Purpose |
-|-------|-------|---------|
-| `speed` | 1.0-4.0 | Movement velocity |
-| `pheromone_sensitivity` | 0.01-0.5 | Trail-following tendency |
-| `exploration_rate` | 0.05-0.4 | Random vs directed behavior |
-| `pheromone_strength` | 0.5-3.0 | Trail intensity when depositing |
-| `energy_efficiency` | 0.005-0.02 | Energy drain per frame |
-
-When modifying genes, always respect `_clamp_genes()` bounds and maintain the crossover/mutation pattern.
+### Ant Attributes (src/ant.py)
+Ants have fixed attribute values:
+| Attribute | Value | Purpose |
+|-----------|-------|---------|
+| `speed` | 2.0 | Movement velocity |
+| `pheromone_sensitivity` | 0.15 | Trail-following tendency |
+| `pheromone_strength` | 1.5 | Trail intensity when depositing |
+| `energy_efficiency` | 0.01 | Energy drain per frame |
 
 ### Runtime Configuration (src/config.py)
 Use `RuntimeParams` class for real-time adjustable parameters:
@@ -53,19 +50,16 @@ Static colors/constants are module-level in `config.py`.
 - **Auto-saves**: On pause (SPACE) and reset (R)
 - **Auto-loads**: On startup via `load_colony_state()` in `Colony.__init__`
 - **Location**: `ant_saves/colony_state.json`
-- **Serialization**: `genes_to_dict()`/`dict_to_genes()` for AntGenes objects
 
-### Pheromone System
-Two separate layers: `foraging_pheromones` and `returning_pheromones`
-- Evaporation rate: 0.999 (slow fade ~5 minutes)
-- Detection threshold: strength > 15
+### Pheromone System (src/pheromone_model.py)
+Two separate trail types:
+- `FOOD_TRAIL` (Green): Deposited by returning ants, leads TO food
+- `HOME_TRAIL` (Blue): Deposited by foraging ants, leads TO home
+
+Key settings:
+- Evaporation rate: 0.995
+- Detection threshold: 10.0
 - Max value: 200.0
-
-### Fitness Calculation
-Located in `FitnessTracker.calculate_fitness()`. Key scoring:
-- `food_collected * 15` (primary reward)
-- `successful_trips * 20` (trip bonus)
-- Penalties for `wall_hits` and `time_stuck`
 
 ## Controls
 
@@ -75,6 +69,8 @@ Located in `FitnessTracker.calculate_fitness()`. Key scoring:
 | P | Toggle pheromone visualization |
 | R | Reset colony (auto-saves) |
 | G | Toggle grid |
+| D | Toggle debug mode |
+| 1-6 | Debug levels (OFF/STATS/ANT/PHEROMONE/PATH/FULL) |
 | H | Show keybind hints |
 | ESC | Quit |
 
@@ -88,21 +84,13 @@ python main.py
 
 | Task | Location |
 |------|----------|
-| Add new genetic trait | `AntGenes.__init__`, `_mutate()`, `_clamp_genes()`, `genes_to_dict()` |
 | Change ant behavior | `Ant._forage()`, `Ant._return_to_colony()` in ant.py |
 | Adjust wall layout | `WallManager._create_walls()` in walls.py |
-| Change food respawn | `Colony._create_food_sources()`, `Colony._check_food_respawn()` |
+| Change food respawn | `Colony._create_food_sources()` in colony.py |
+| Modify pheromones | `PheromoneModel` in pheromone_model.py |
 
 ## Conventions
 
 - **State machine pattern**: Ant behavior uses `AntState` enum (FORAGING/RETURNING/IDLE)
 - **Bounds checking**: Always use `self.bounds` rect for constraining positions
-- **Gene pool**: Top 50 genes preserved in `colony.gene_pool`, used for breeding
-- **Coordinate system**: Pygame (0,0 at top-left), positions stored as floats
-
-## Conventions
-
-- **State machine pattern**: Ant behavior uses `AntState` enum (FORAGING/RETURNING/IDLE)
-- **Bounds checking**: Always use `self.bounds` rect for constraining positions
-- **Gene pool**: Top 50 genes preserved in `colony.gene_pool`, used for breeding
 - **Coordinate system**: Pygame (0,0 at top-left), positions stored as floats
