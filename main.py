@@ -12,6 +12,7 @@ def draw_keybind_hints(screen, font):
         "[,/.] Speed Down/Up",
         "[P] Toggle Pheromones",
         "[R] Reset Colony",
+        "[M] New Maze",
         "[G] Toggle Grid",
         "[D] Debug Mode",
         "[1-5] Debug Levels",
@@ -129,6 +130,16 @@ def main():
                 elif event.key == pygame.K_COMMA:  # , to slow down
                     speed_index = max(speed_index - 1, 0)
                     sim_speed = speed_levels[speed_index]
+                elif event.key == pygame.K_m:  # M to regenerate maze
+                    from src.walls import WallManager
+                    colony.wall_manager = WallManager(
+                        sim_rect.width, sim_rect.height,
+                        sim_rect.left, sim_rect.top
+                    )
+                    # Clear food that ended up in walls
+                    colony.food_sources = [f for f in colony.food_sources 
+                                          if colony._is_valid_food_position(f.x, f.y)]
+                    print("Generated new maze!")
             
             # Mouse click to add food (while holding F key)
             elif event.type == pygame.MOUSEBUTTONDOWN:
