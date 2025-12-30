@@ -102,6 +102,10 @@ class Colony:
             amount = random.uniform(50, 150)
             self.food_sources.append(FoodSource(x, y, amount))
     
+    def add_food_source(self, x, y, amount=50):
+        """Add a new food source at the specified position"""
+        self.food_sources.append(FoodSource(x, y, amount))
+    
     def add_food(self, amount):
         """Add food to colony"""
         self.food_stored = min(self.food_stored + amount, self.max_food)

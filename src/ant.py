@@ -5,7 +5,7 @@ import math
 import random
 import os
 from enum import Enum
-from src.config import GRID_SIZE, runtime, ANT_SMELL_RANGE, ANT_SMELL_STRENGTH, ANT_WANDER_TURN_RATE
+from src.config import GRID_SIZE, ANT_SMELL_RANGE, ANT_SMELL_STRENGTH, ANT_WANDER_TURN_RATE
 from src.pheromone_model import PheromoneType
 
 # Pheromone deposit amount
@@ -73,6 +73,7 @@ class Ant:
         self.colony = colony
         self.radius = 6
         self.color = (220, 120, 180)
+        self.alive = True  # For wall-stuck detection
         
         # ANT STATUS SYSTEM
         self.state = AntState.FORAGING  # Current behavior mode
@@ -110,6 +111,10 @@ class Ant:
         
     def update(self, pheromone_map, width, height, food_sources, colony_pos, other_ants=None, bounds=None):
         """Update ant behavior each frame"""
+        # Check if ant is dead (e.g., stuck in wall)
+        if not self.alive:
+            return False
+        
         energy_cost = DEFAULT_ENERGY_EFFICIENCY
         self.energy -= energy_cost
         
@@ -224,9 +229,9 @@ class Ant:
             self.direction += random.uniform(-math.pi/2, math.pi/2)
     
     def _avoid_other_ants(self, other_ants):
-        """Add repulsion from nearby ants to prevent clustering (using runtime params)"""
-        repulsion_radius = runtime.ant_repulsion_radius
-        repel_strength = runtime.ant_repulsion_strength
+        """Add repulsion from nearby ants to prevent clustering"""
+        repulsion_radius = 25.0
+        repel_strength = 0.3
         for other in other_ants:
             if other is self:
                 continue
@@ -235,7 +240,6 @@ class Ant:
             dist = math.sqrt(dx**2 + dy**2)
             if dist < repulsion_radius and dist > 0:
                 # Push away from other ant
-                push_strength = (repulsion_radius - dist) / repulsion_radius * 0.5
                 angle_away = math.atan2(dy, dx)
                 self.direction = self.direction * (1 - repel_strength) + angle_away * repel_strength
     
@@ -373,57 +377,75 @@ class Ant:
             self.direction += random.uniform(-0.2, 0.2)
     
     def _move(self, width, height, pheromone_map):
-        """Move ant in current direction"""
+        """Move ant in current direction with proactive wall avoidance"""
         # Track consecutive stuck frames
         if not hasattr(self, 'stuck_counter'):
             self.stuck_counter = 0
+        if not hasattr(self, 'wall_stuck_time'):
+            self.wall_stuck_time = 0
         
-        # Stuck detection and escape mechanism (using runtime params)
-        if self.stuck_counter > runtime.stuck_threshold:
+        # Check if currently inside a wall
+        inside_wall = False
+        if hasattr(self.colony, 'wall_manager'):
+            inside_wall, _ = self.colony.wall_manager.is_colliding(self.x, self.y, self.radius * 0.5)
+        
+        # Track wall stuck time - if inside wall too long, mark for death
+        if inside_wall:
+            self.wall_stuck_time += 1
+            if self.wall_stuck_time > 60:  # ~1 second at 60 FPS
+                self.alive = False  # Kill the ant
+                return
+            # Try aggressive push out
+            self.x, self.y = self.colony.wall_manager.push_out_of_wall(self.x, self.y, self.radius)
+        else:
+            self.wall_stuck_time = 0  # Reset if not in wall
+        
+        # General stuck detection and escape mechanism
+        if self.stuck_counter > 30:
             self.direction = random.uniform(0, 2 * math.pi)  # Random new direction
             self.stuck_counter = 0
-            # Jump a small distance to break free
-            self.x += random.uniform(-10, 10)
-            self.y += random.uniform(-10, 10)
+            # Push out of wall if inside
+            if hasattr(self.colony, 'wall_manager'):
+                self.x, self.y = self.colony.wall_manager.push_out_of_wall(self.x, self.y, self.radius)
         
-        # Smooth direction changes with momentum (using runtime param)
-        momentum = runtime.momentum
+        # PROACTIVE WALL AVOIDANCE - "see" walls ahead and turn before hitting
+        if hasattr(self.colony, 'wall_manager'):
+            should_turn, turn_amount = self.colony.wall_manager.get_avoidance_direction(
+                self.x, self.y, self.direction, look_range=80
+            )
+            if should_turn:
+                self.direction += turn_amount
+        
+        # Smooth direction changes with momentum
+        momentum = 0.7
         self.direction = self.previous_direction * momentum + self.direction * (1 - momentum)
         self.previous_direction = self.direction
         
-        # Add small random jitter to prevent perfect oscillation (using runtime param)
-        jitter = runtime.random_jitter
-        self.direction += random.uniform(-jitter, jitter)
+        # Add small random jitter to prevent oscillation
+        self.direction += random.uniform(-0.05, 0.05)
         
-        # Calculate base movement
-        base_dx = math.cos(self.direction) * self.speed
-        base_dy = math.sin(self.direction) * self.speed
+        # Calculate movement
+        dx = math.cos(self.direction) * self.speed
+        dy = math.sin(self.direction) * self.speed
         
-        # Check for wall avoidance if colony has wall manager (using runtime params)
-        wall_dx = 0
-        wall_dy = 0
+        new_x = self.x + dx
+        new_y = self.y + dy
+        
+        # Check collision with walls - if about to enter, stop and turn
         if hasattr(self.colony, 'wall_manager'):
-            wall_dx, wall_dy = self.colony.wall_manager.get_repel_vector(self.x, self.y, runtime.wall_repel_range)
-            # Scale wall repulsion to be significant (using runtime param)
-            wall_dx *= runtime.wall_repel_strength
-            wall_dy *= runtime.wall_repel_strength
-        
-        # Combine movements: 70% base direction, 30% wall repulsion
-        new_dx = base_dx * 0.7 + wall_dx * 0.3
-        new_dy = base_dy * 0.7 + wall_dy * 0.3
-        
-        # Calculate new position
-        new_x = self.x + new_dx
-        new_y = self.y + new_dy
-        
-        # Check collision with walls and BLOCK movement if hitting wall
-        if hasattr(self.colony, 'wall_manager'):
-            new_x, new_y = self.colony.wall_manager.get_avoid_position(self.x, self.y, new_x, new_y, radius=self.radius)
-            # If blocked, turn away
-            if new_x == self.x and new_y == self.y:
-                self.energy -= 0.5           # Energy cost for collision
-                self.direction = random.uniform(0, 2 * math.pi)  # Complete random turn
-                self.stuck_counter += 5  # Big stuck penalty
+            colliding, wall = self.colony.wall_manager.is_colliding(new_x, new_y, self.radius)
+            if colliding:
+                # Push out if inside
+                new_x, new_y = self.colony.wall_manager.push_out_of_wall(new_x, new_y, self.radius)
+                # Turn perpendicular to wall
+                wall_center_x = wall.rect.centerx
+                wall_center_y = wall.rect.centery
+                away_angle = math.atan2(self.y - wall_center_y, self.x - wall_center_x)
+                self.direction = away_angle + random.uniform(-0.5, 0.5)
+                self.stuck_counter += 2
+                # Don't move into wall
+                new_x = self.x
+                new_y = self.y
         
         # Update position
         self.x = new_x
@@ -438,14 +460,14 @@ class Ant:
         else:
             self.stuck_counter = max(0, self.stuck_counter - 1)  # Recover if moving
         
-        # Hard clamp to bounds - this ensures ants NEVER leave the grid
+        # Hard clamp to bounds
         if hasattr(self, 'bounds') and self.bounds:
             if self.x <= self.bounds.left:
                 self.x = self.bounds.left + 2
-                self.direction = random.uniform(0, math.pi)  # Random bounce toward right
+                self.direction = random.uniform(-math.pi/2, math.pi/2)  # Face right
             elif self.x >= self.bounds.right:
                 self.x = self.bounds.right - 2
-                self.direction = random.uniform(math.pi/2, 3*math.pi/2)  # Random bounce toward left
+                self.direction = random.uniform(math.pi/2, 3*math.pi/2)  # Face left
             
             if self.y <= self.bounds.top:
                 self.y = self.bounds.top + 2

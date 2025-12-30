@@ -200,44 +200,42 @@ class PheromoneModel:
     
     def draw(self, target_surface, show_food=True, show_home=True, opacity=200):
         """
-        Draw pheromone visualization.
+        Draw pheromone visualization - SIMPLE RECT SYSTEM.
         
-        Args:
-            target_surface: Pygame surface to draw on
-            show_food: Show green food trails
-            show_home: Show blue home trails
-            opacity: Max opacity (0-255)
+        Green = Food trail (from returning ants)
+        Blue = Home trail (from foraging ants)
         """
-        self.surface.fill((0, 0, 0, 0))  # Clear with transparency
-        
+        # Draw directly to target - simpler approach
         for gy in range(self.grid_height):
             for gx in range(self.grid_width):
-                cx = gx * self.cell_size + self.cell_size // 2
-                cy = gy * self.cell_size + self.cell_size // 2
+                x = gx * self.cell_size
+                y = gy * self.cell_size
                 
-                # Draw food trail (GREEN)
-                if show_food:
-                    strength = self.food_trail.get(gx, gy)
-                    if strength > self.detection_threshold * 0.5:
-                        intensity = min(1.0, strength / self.max_pheromone * 2)
-                        r, g, b = self.food_color
-                        alpha = int(opacity * intensity)
-                        radius = max(4, int(self.cell_size * 0.5 * intensity))
-                        color = (r, g, b, alpha)
-                        pygame.draw.circle(self.surface, color, (cx, cy), radius)
+                food_strength = self.food_trail.get(gx, gy)
+                home_strength = self.home_trail.get(gx, gy)
                 
-                # Draw home trail (BLUE)
-                if show_home:
-                    strength = self.home_trail.get(gx, gy)
-                    if strength > self.detection_threshold * 0.5:
-                        intensity = min(1.0, strength / self.max_pheromone * 2)
-                        r, g, b = self.home_color
-                        alpha = int(opacity * intensity)
-                        radius = max(4, int(self.cell_size * 0.5 * intensity))
-                        color = (r, g, b, alpha)
-                        pygame.draw.circle(self.surface, color, (cx, cy), radius)
-        
-        target_surface.blit(self.surface, (0, 0))
+                # Skip if both are below threshold
+                if food_strength < 5 and home_strength < 5:
+                    continue
+                
+                # Create a surface for this cell
+                cell_surface = pygame.Surface((self.cell_size, self.cell_size), pygame.SRCALPHA)
+                
+                # Draw HOME trail (BLUE) first - underneath
+                if show_home and home_strength >= 5:
+                    intensity = min(1.0, home_strength / 100.0)
+                    alpha = int(150 * intensity)
+                    blue_color = (50, 100, 255, alpha)
+                    pygame.draw.rect(cell_surface, blue_color, (0, 0, self.cell_size, self.cell_size))
+                
+                # Draw FOOD trail (GREEN) on top
+                if show_food and food_strength >= 5:
+                    intensity = min(1.0, food_strength / 100.0)
+                    alpha = int(180 * intensity)
+                    green_color = (50, 255, 50, alpha)
+                    pygame.draw.rect(cell_surface, green_color, (0, 0, self.cell_size, self.cell_size))
+                
+                target_surface.blit(cell_surface, (x, y))
     
     # ==================== SERIALIZATION ====================
     

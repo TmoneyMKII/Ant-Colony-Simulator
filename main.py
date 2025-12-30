@@ -1,6 +1,6 @@
 import pygame
 import sys
-from src.config import DARK_BG_COLOR, GRID_SIZE, GRID_COLOR
+from src.config import DARK_BG_COLOR, GRID_SIZE, GRID_COLOR, CLICK_FOOD_AMOUNT, CLICK_FOOD_KEY
 from src.colony import Colony
 from src.save_state import save_colony_state, load_colony_state
 from src.debug import DebugSystem, DebugMode
@@ -14,6 +14,7 @@ def draw_keybind_hints(screen, font):
         "[G] Toggle Grid",
         "[D] Debug Mode",
         "[1-5] Debug Levels",
+        "[F+Click] Add Food",
         "[H] Hide Hints",
         "[ESC] Quit",
     ]
@@ -116,6 +117,15 @@ def main():
                     debug.set_mode(DebugMode.PATHFINDING)
                 elif event.key == pygame.K_6:
                     debug.set_mode(DebugMode.FULL)
+            
+            # Mouse click to add food (while holding F key)
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:  # Left click
+                    keys = pygame.key.get_pressed()
+                    if keys[CLICK_FOOD_KEY]:
+                        # Add food at mouse position
+                        colony.add_food_source(event.pos[0], event.pos[1], CLICK_FOOD_AMOUNT)
+                        print(f"Added food source at {event.pos}")
         
         # Update
         if simulation_running:
