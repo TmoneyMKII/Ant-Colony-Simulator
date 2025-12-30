@@ -3,11 +3,12 @@
 import pygame
 import random
 import os
+from collections import deque
 from src.ant import Ant, AntState
 from src.pheromone_model import PheromoneModel
 from src.save_state import load_colony_state, apply_saved_state_to_colony
 from src.walls import WallManager
-from src.config import INITIAL_ANT_COUNT, MAX_POPULATION
+from src.config import INITIAL_ANT_COUNT, MAX_POPULATION, DEATH_MARKER_DURATION, MAX_DEATH_MARKERS
 
 # Load death marker sprite
 _death_marker_sprite = None
@@ -83,8 +84,9 @@ class Colony:
         self.wall_manager = WallManager(width, height, bounds.left if bounds else 0, bounds.top if bounds else 0)
         
         # Death markers (x, y, frames_remaining) - shows blood splat for 10 seconds
-        self.death_markers = []
-        self.death_marker_duration = 60 * 10  # 10 seconds at 60 FPS
+        # Using deque with maxlen for automatic old marker removal
+        self.death_markers = deque(maxlen=MAX_DEATH_MARKERS)
+        self.death_marker_duration = DEATH_MARKER_DURATION
         
         # Load saved state if available
         saved_state = load_colony_state()
@@ -194,7 +196,13 @@ class Colony:
             self.pheromone_map.deposit_danger(x, y, 150)
         
         # Update death markers (count down and remove expired)
-        self.death_markers = [[x, y, frames - 1] for x, y, frames in self.death_markers if frames > 1]
+        # Decrement all markers and filter expired ones efficiently
+        updated_markers = deque(maxlen=MAX_DEATH_MARKERS)
+        for marker in self.death_markers:
+            marker[2] -= 1
+            if marker[2] > 0:
+                updated_markers.append(marker)
+        self.death_markers = updated_markers
         
         # Consume food for remaining population
         self.consume_food()

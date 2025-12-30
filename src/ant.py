@@ -5,7 +5,11 @@ import math
 import random
 import os
 from enum import Enum
-from src.config import GRID_SIZE, ANT_SMELL_RANGE, ANT_SMELL_STRENGTH, ANT_WANDER_TURN_RATE
+from src.config import (
+    GRID_SIZE, ANT_SMELL_RANGE, ANT_SMELL_RANGE_SQ, ANT_SMELL_STRENGTH, ANT_WANDER_TURN_RATE,
+    ANT_FOOD_PICKUP_RANGE_SQ, ANT_COLONY_DROPOFF_RANGE_SQ, ANT_REPULSION_RADIUS_SQ,
+    STUCK_CHECK_INTERVAL, STUCK_MIN_MOVEMENT_SQ, MAX_ESCAPE_ATTEMPTS, WALL_STUCK_DEATH_TIME
+)
 from src.pheromone_model import PheromoneType
 
 # Pheromone deposit amount
@@ -109,14 +113,11 @@ class Ant:
         self.max_trail_length = 60
         self.trail_update_counter = 0
         
-        # Movement tracking for stuck detection
-        self.movement_check_interval = 180  # Check every 3 seconds (60 FPS * 3)
-        self.min_movement_distance = 80     # Must move at least 80 pixels (~4 grid spaces)
+        # Movement tracking for stuck detection (using config constants)
         self.movement_timer = 0
         self.checkpoint_x = x
         self.checkpoint_y = y
         self.stuck_escape_count = 0         # Track how many times we've tried to escape
-        self.max_escape_attempts = 5        # After this many failed escapes, ant dies
         
     def update(self, pheromone_map, width, height, food_sources, colony_pos, other_ants=None, bounds=None):
         """Update ant behavior each frame"""
@@ -124,15 +125,15 @@ class Ant:
         if not self.alive:
             return False
         
-        # Movement-based stuck detection
+        # Movement-based stuck detection (using squared distance for performance)
         self.movement_timer += 1
-        if self.movement_timer >= self.movement_check_interval:
-            # Calculate distance moved since last checkpoint
-            dist_moved = math.sqrt((self.x - self.checkpoint_x)**2 + (self.y - self.checkpoint_y)**2)
-            if dist_moved < self.min_movement_distance:
+        if self.movement_timer >= STUCK_CHECK_INTERVAL:
+            # Calculate squared distance moved since last checkpoint (avoids sqrt)
+            dist_moved_sq = (self.x - self.checkpoint_x)**2 + (self.y - self.checkpoint_y)**2
+            if dist_moved_sq < STUCK_MIN_MOVEMENT_SQ:
                 # Ant hasn't moved enough - try to escape with random direction
                 self.stuck_escape_count += 1
-                if self.stuck_escape_count >= self.max_escape_attempts:
+                if self.stuck_escape_count >= MAX_ESCAPE_ATTEMPTS:
                     # Too many failed escape attempts - ant dies
                     self.alive = False
                     return False
@@ -212,17 +213,17 @@ class Ant:
         # DUAL PHEROMONE SYSTEM:
         # - HOME_TRAIL (BLUE): deposited when foraging (marks path back to colony)
         # - FOOD_TRAIL (GREEN): deposited when returning with food (marks path to food)
-        colony_dist = math.sqrt((self.x - colony_pos[0])**2 + (self.y - colony_pos[1])**2)
+        colony_dist_sq = (self.x - colony_pos[0])**2 + (self.y - colony_pos[1])**2
         
         if self.deposit_cooldown == 0:
             if self.state == AntState.RETURNING and self.carrying_food:
                 # FOOD_TRAIL (GREEN) - tells others where food is
-                if colony_dist > 50:
+                if colony_dist_sq > 2500:  # 50^2
                     pheromone_map.deposit_food_trail(self.x, self.y, PHEROMONE_DEPOSIT * self.pheromone_strength)
                     self.deposit_cooldown = 2
             elif self.state == AntState.FORAGING:
                 # HOME_TRAIL (BLUE) - marks path back to colony
-                if colony_dist > 50:
+                if colony_dist_sq > 2500:  # 50^2
                     pheromone_map.deposit_home_trail(self.x, self.y, PHEROMONE_DEPOSIT * self.pheromone_strength)
                     self.deposit_cooldown = 2
         
@@ -264,16 +265,15 @@ class Ant:
             self.direction += random.uniform(-math.pi/2, math.pi/2)
     
     def _avoid_other_ants(self, other_ants):
-        """Add repulsion from nearby ants to prevent clustering"""
-        repulsion_radius = 25.0
+        """Add repulsion from nearby ants to prevent clustering (uses squared distance)"""
         repel_strength = 0.3
         for other in other_ants:
             if other is self:
                 continue
             dx = self.x - other.x
             dy = self.y - other.y
-            dist = math.sqrt(dx**2 + dy**2)
-            if dist < repulsion_radius and dist > 0:
+            dist_sq = dx**2 + dy**2
+            if dist_sq < ANT_REPULSION_RADIUS_SQ and dist_sq > 0:
                 # Push away from other ant
                 angle_away = math.atan2(dy, dx)
                 self.direction = self.direction * (1 - repel_strength) + angle_away * repel_strength
@@ -286,10 +286,10 @@ class Ant:
         - Priority 3: Follow GREEN pheromone trail (food trail from returning ants)
         - Priority 4: Wander randomly to explore
         """
-        # PRIORITY 1: Check if ant is touching food (pickup range)
+        # PRIORITY 1: Check if ant is touching food (pickup range, using squared distance)
         for food in food_sources:
-            dist = math.sqrt((self.x - food.x)**2 + (self.y - food.y)**2)
-            if dist < 15 and food.amount > 0:
+            dist_sq = (self.x - food.x)**2 + (self.y - food.y)**2
+            if dist_sq < ANT_FOOD_PICKUP_RANGE_SQ and food.amount > 0:
                 # Take 1 unit of food from source
                 food.amount -= 1
                 self.carrying_food = True
@@ -307,20 +307,21 @@ class Ant:
                 self.time_since_food = 0
                 return
         
-        # PRIORITY 2: Smell food directly within range
+        # PRIORITY 2: Smell food directly within range (using squared distance)
         closest_food = None
-        closest_dist = ANT_SMELL_RANGE
+        closest_dist_sq = ANT_SMELL_RANGE_SQ
         
         for food in food_sources:
             if food.amount <= 0:
                 continue
-            dist = math.sqrt((self.x - food.x)**2 + (self.y - food.y)**2)
-            if dist < closest_dist:
-                closest_dist = dist
+            dist_sq = (self.x - food.x)**2 + (self.y - food.y)**2
+            if dist_sq < closest_dist_sq:
+                closest_dist_sq = dist_sq
                 closest_food = food
         
         if closest_food:
-            # Ant smells food - move toward it
+            # Ant smells food - move toward it (need sqrt only for the closest one)
+            closest_dist = math.sqrt(closest_dist_sq)
             food_direction = self._get_direction_to(closest_food.x, closest_food.y)
             smell_intensity = 1.0 - (closest_dist / ANT_SMELL_RANGE)
             blend_factor = ANT_SMELL_STRENGTH * smell_intensity
@@ -336,10 +337,10 @@ class Ant:
             return
         
         # Check distance from colony - don't follow pheromones near colony (prevents clustering)
-        colony_dist = math.sqrt((self.x - colony_pos[0])**2 + (self.y - colony_pos[1])**2)
+        colony_dist_sq = (self.x - colony_pos[0])**2 + (self.y - colony_pos[1])**2
         
         # PRIORITY 3: Follow GREEN pheromone (food trail) - only far from colony
-        if colony_dist > 150:  # Only follow trails when well away from colony
+        if colony_dist_sq > 22500:  # 150^2 - Only follow trails when well away from colony
             food_trail = pheromone_map.get_food_trail_direction(self.x, self.y, self.direction)
             
             if food_trail is not None:
@@ -358,7 +359,9 @@ class Ant:
         
         # PRIORITY 4: No trail or near colony - wander to explore
         # Add outward bias when near colony to encourage spreading
-        if colony_dist < 250:
+        colony_dist_sq = (self.x - colony_pos[0])**2 + (self.y - colony_pos[1])**2
+        if colony_dist_sq < 62500:  # 250^2
+            colony_dist = math.sqrt(colony_dist_sq)  # Only sqrt when needed
             outward_dir = math.atan2(self.y - colony_pos[1], self.x - colony_pos[0])
             bias = (250 - colony_dist) / 250 * 0.2  # Stronger when closer
             angle_diff = outward_dir - self.direction
@@ -377,9 +380,9 @@ class Ant:
         - Priority 2: Follow BLUE pheromone trail (home trail from foraging ants)
         - Priority 3: Head directly toward colony (ants know where home is)
         """
-        # PRIORITY 1: Check if reached colony
-        dist = math.sqrt((self.x - colony_pos[0])**2 + (self.y - colony_pos[1])**2)
-        if dist < 25:
+        # PRIORITY 1: Check if reached colony (using squared distance)
+        dist_sq = (self.x - colony_pos[0])**2 + (self.y - colony_pos[1])**2
+        if dist_sq < ANT_COLONY_DROPOFF_RANGE_SQ:
             # Drop food at colony
             self.colony.add_food(self.food_amount)
             self.food_collected += self.food_amount
@@ -427,7 +430,7 @@ class Ant:
         # Track wall stuck time - if inside wall too long, mark for death
         if inside_wall:
             self.wall_stuck_time += 1
-            if self.wall_stuck_time > 60:  # ~1 second at 60 FPS
+            if self.wall_stuck_time > WALL_STUCK_DEATH_TIME:
                 self.alive = False  # Kill the ant
                 return
             # Try aggressive push out
@@ -491,11 +494,11 @@ class Ant:
         self.x = new_x
         self.y = new_y
         
-        # Track distance traveled for stuck detection
-        dist = math.sqrt((self.x - self.prev_x)**2 + (self.y - self.prev_y)**2)
+        # Track distance traveled for stuck detection (squared distance)
+        dist_sq = (self.x - self.prev_x)**2 + (self.y - self.prev_y)**2
         
-        # Check if stuck
-        if dist < 0.5:
+        # Check if stuck (0.5^2 = 0.25)
+        if dist_sq < 0.25:
             self.stuck_counter += 1
         else:
             self.stuck_counter = max(0, self.stuck_counter - 1)  # Recover if moving

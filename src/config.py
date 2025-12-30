@@ -37,8 +37,28 @@ MAX_POPULATION = 500            # Maximum ant population
 
 # Ant senses
 ANT_SMELL_RANGE = 150           # How far ants can smell food (pixels)
+ANT_SMELL_RANGE_SQ = ANT_SMELL_RANGE ** 2  # Squared for fast distance checks
 ANT_SMELL_STRENGTH = 0.8        # How strongly ants are drawn to food scent (0-1)
 ANT_WANDER_TURN_RATE = 0.15     # How much ants turn when wandering (radians)
+
+# Ant collision/interaction distances (squared for performance)
+ANT_FOOD_PICKUP_RANGE = 15      # Distance to pick up food
+ANT_FOOD_PICKUP_RANGE_SQ = ANT_FOOD_PICKUP_RANGE ** 2
+ANT_COLONY_DROPOFF_RANGE = 25   # Distance to drop off food at colony
+ANT_COLONY_DROPOFF_RANGE_SQ = ANT_COLONY_DROPOFF_RANGE ** 2
+ANT_REPULSION_RADIUS = 25.0     # Distance for ant-to-ant repulsion
+ANT_REPULSION_RADIUS_SQ = ANT_REPULSION_RADIUS ** 2
+
+# Stuck detection settings
+STUCK_CHECK_INTERVAL = 180      # Frames between stuck checks (3 sec at 60 FPS)
+STUCK_MIN_MOVEMENT = 80         # Min pixels to move to not be considered stuck
+STUCK_MIN_MOVEMENT_SQ = STUCK_MIN_MOVEMENT ** 2
+MAX_ESCAPE_ATTEMPTS = 5         # Escape attempts before ant dies
+WALL_STUCK_DEATH_TIME = 60      # Frames in wall before death (~1 sec)
+
+# Death markers
+DEATH_MARKER_DURATION = 600     # Frames death marker visible (10 sec at 60 FPS)
+MAX_DEATH_MARKERS = 500         # Maximum death markers to track
 
 # Food placement
 CLICK_FOOD_AMOUNT = 50          # Food amount when clicking to add food (hold F + click)
