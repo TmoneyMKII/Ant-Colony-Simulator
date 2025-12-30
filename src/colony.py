@@ -7,6 +7,7 @@ from src.pheromone import PheromoneMap
 from src.genetics import AntGenes
 from src.save_state import load_colony_state, apply_saved_state_to_colony
 from src.walls import WallManager
+from src.config import INITIAL_ANT_COUNT, MAX_POPULATION
 
 class FoodSource:
     """A food source on the map"""
@@ -50,7 +51,7 @@ class Colony:
         self.food_stored = 0
         self.max_food = 10000
         self.population = 0
-        self.max_population = 500
+        self.max_population = MAX_POPULATION
         
         # Evolution tracking
         self.generation = 0
@@ -75,7 +76,7 @@ class Colony:
             apply_saved_state_to_colony(self, saved_state)
         
         # Spawn initial ants
-        self._spawn_initial_ants(30)
+        self._spawn_initial_ants(INITIAL_ANT_COUNT)
         self._create_food_sources()
     
     def _spawn_initial_ants(self, count):

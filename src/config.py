@@ -32,6 +32,10 @@ UI_BORDER_WIDTH = 1
 # Animation
 FPS = 60
 
+# Simulation settings
+INITIAL_ANT_COUNT = 1          # Number of ants to start with
+MAX_POPULATION = 500            # Maximum ant population
+
 # =====================
 # REAL-TIME ADJUSTABLE PARAMETERS
 # These can be modified via UI sliders
