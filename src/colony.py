@@ -86,8 +86,15 @@ class Colony:
             self.ants.append(Ant(x, y, self))
             self.population += 1
     
+    def _is_valid_food_position(self, x, y, margin=20):
+        """Check if a position is valid for food (not inside a wall)"""
+        if not hasattr(self, 'wall_manager') or self.wall_manager is None:
+            return True
+        colliding, _ = self.wall_manager.is_colliding(x, y, margin)
+        return not colliding
+    
     def _create_food_sources(self):
-        """Create food sources on the map"""
+        """Create food sources on the map (avoiding walls)"""
         if self.bounds:
             x_min, x_max = self.bounds.left + 50, self.bounds.right - 50
             y_min, y_max = self.bounds.top + 50, self.bounds.bottom - 50
@@ -96,15 +103,21 @@ class Colony:
             y_min, y_max = 100, self.height - 100
         
         for _ in range(12):  # Increased from 5 to 12
-            x = random.uniform(x_min, x_max)
-            y = random.uniform(y_min, y_max)
-            # Random food amount between 50-150
-            amount = random.uniform(50, 150)
-            self.food_sources.append(FoodSource(x, y, amount))
+            # Try to find valid position (not in wall)
+            for attempt in range(20):  # Max 20 attempts per food
+                x = random.uniform(x_min, x_max)
+                y = random.uniform(y_min, y_max)
+                if self._is_valid_food_position(x, y):
+                    amount = random.uniform(50, 150)
+                    self.food_sources.append(FoodSource(x, y, amount))
+                    break
     
     def add_food_source(self, x, y, amount=50):
-        """Add a new food source at the specified position"""
-        self.food_sources.append(FoodSource(x, y, amount))
+        """Add a new food source at the specified position (if not in wall)"""
+        if self._is_valid_food_position(x, y):
+            self.food_sources.append(FoodSource(x, y, amount))
+            return True
+        return False
     
     def add_food(self, amount):
         """Add food to colony"""
@@ -166,16 +179,19 @@ class Colony:
         for i in reversed(depleted):
             self.food_sources.pop(i)
         
-        # Spawn new food sources to maintain population
-        while len(self.food_sources) < 12:
+        # Spawn new food sources to maintain population (avoiding walls)
+        attempts = 0
+        while len(self.food_sources) < 12 and attempts < 50:
+            attempts += 1
             if self.bounds:
                 x = random.uniform(self.bounds.left + 50, self.bounds.right - 50)
                 y = random.uniform(self.bounds.top + 50, self.bounds.bottom - 50)
             else:
                 x = random.uniform(100, self.width - 100)
                 y = random.uniform(100, self.height - 100)
-            amount = random.uniform(50, 150)
-            self.food_sources.append(FoodSource(x, y, amount))
+            if self._is_valid_food_position(x, y):
+                amount = random.uniform(50, 150)
+                self.food_sources.append(FoodSource(x, y, amount))
     
     def draw(self, surface, show_pheromones=True, view_rect=None):
         """Draw colony and all entities"""
