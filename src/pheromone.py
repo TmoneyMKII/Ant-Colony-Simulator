@@ -3,6 +3,7 @@
 import math
 import pygame
 from src.ant import AntState
+from src.config import PHEROMONE_EVAPORATION, PHEROMONE_MAX, PHEROMONE_THRESHOLD
 
 class PheromoneMap:
     """Manages pheromone trails left by ants"""
@@ -18,8 +19,8 @@ class PheromoneMap:
         self.foraging_pheromones = [[0.0 for _ in range(self.grid_width)] for _ in range(self.grid_height)]
         self.returning_pheromones = [[0.0 for _ in range(self.grid_width)] for _ in range(self.grid_height)]
         
-        self.evaporation_rate = 0.999  # Much slower evaporation (was 0.995)
-        self.max_pheromone = 200.0  # Increased max to allow stronger trails
+        self.evaporation_rate = PHEROMONE_EVAPORATION  # Very slow evaporation for persistent trails
+        self.max_pheromone = PHEROMONE_MAX
         
     def deposit_pheromone(self, x, y, strength, state):
         """Deposit pheromone at position"""
@@ -75,7 +76,7 @@ class PheromoneMap:
                     best_direction = math.atan2(dy, dx)
         
         # Only return direction if pheromone is strong enough
-        if best_strength > 15:  # Balanced threshold (was 5, originally 20)
+        if best_strength > PHEROMONE_THRESHOLD:
             return best_direction
         
         return None

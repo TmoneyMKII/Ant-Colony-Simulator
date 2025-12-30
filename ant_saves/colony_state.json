@@ -1,11 +1,11 @@
 {
-  "timestamp": "2025-12-23T03:32:46.839975",
+  "timestamp": "2025-12-30T22:56:43.711361",
   "generation": 0,
   "gene_pool": [],
   "stats": {
-    "best_fitness": 205.38958474745422,
-    "average_fitness": 23.87195282048144,
-    "population": 19,
+    "best_fitness": 0,
+    "average_fitness": 0,
+    "population": 1,
     "food_stored": 0
   }
 }
