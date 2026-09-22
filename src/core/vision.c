@@ -1,263 +1,137 @@
 /**
  * @file vision.c
- * @brief Ray-based vision system implementation
- * 
- * Each ant casts 7 rays across a 180° FOV to detect:
- *   - Walls (obstacles)
- *   - Other ants
- *   - Food sources
- * 
- * Distances are normalized 0-1 where:
- *   - 0 = object at maximum range (100 pixels) or not detected
- *   - 1 = object very close
- * 
- * This inverted scale makes it intuitive for the neural network:
- * higher values = more urgent/closer threats or opportunities.
+ * @brief Ray casting for ant senses
+ *
+ * Nearby ants and food are gathered once per ant (through the world's
+ * spatial grid), then every ray is tested against that small candidate
+ * list instead of against the whole colony.
  */
 
 #include "vision.h"
-#include "walls.h"
+#include "world.h"
 #include "utils.h"
-#include <math.h>
 #include <string.h>
 
-/* ============== Pre-computed Ray Angles ============== */
+#define MAX_ANT_CANDIDATES  512
+#define MAX_WALL_CANDIDATES 64
 
-static float precomputed_angles[NN_NUM_VISION_RAYS];
-static bool angles_initialized = false;
+static float ray_angles[NN_NUM_VISION_RAYS];
+static bool ray_angles_ready = false;
 
 static void init_ray_angles(void) {
-    if (angles_initialized) return;
-    
-    float half_fov = (VISION_FOV_DEGREES / 2.0f) * (float)M_PI / 180.0f;
-    
+    float half_fov_rad = (VISION_FOV_DEGREES * 0.5f) * PI_F / 180.0f;
     for (int i = 0; i < NN_NUM_VISION_RAYS; i++) {
-        if (NN_NUM_VISION_RAYS > 1) {
-            float t = (float)i / (float)(NN_NUM_VISION_RAYS - 1);
-            precomputed_angles[i] = -half_fov + t * 2.0f * half_fov;
-        } else {
-            precomputed_angles[i] = 0.0f;
-        }
+        float t = (NN_NUM_VISION_RAYS > 1) ? (float)i / (float)(NN_NUM_VISION_RAYS - 1) : 0.5f;
+        ray_angles[i] = -half_fov_rad + t * 2.0f * half_fov_rad;
     }
-    
-    angles_initialized = true;
+    ray_angles_ready = true;
 }
 
-/* ============== Ray Casting Helpers ============== */
-
-/**
- * @brief Raycast against walls using stepped sampling
- */
-static float raycast_walls(float start_x, float start_y,
-                           float ray_dx, float ray_dy,
-                           const WallManager *wall_manager) {
-    if (!wall_manager) return VISION_RAY_LENGTH;
-    
-    const float step_size = 8.0f;
-    int num_steps = (int)(VISION_RAY_LENGTH / step_size);
-    
-    for (int step = 1; step <= num_steps; step++) {
-        float dist = step * step_size;
-        float check_x = start_x + ray_dx * dist;
-        float check_y = start_y + ray_dy * dist;
-        
-        if (walls_is_colliding(wall_manager, check_x, check_y, 1, NULL)) {
-            /* Binary search for precise distance */
-            float low = (step - 1) * step_size;
-            float high = dist;
-            
-            for (int i = 0; i < 4; i++) {
-                float mid = (low + high) / 2.0f;
-                float cx = start_x + ray_dx * mid;
-                float cy = start_y + ray_dy * mid;
-                
-                if (walls_is_colliding(wall_manager, cx, cy, 1, NULL)) {
-                    high = mid;
-                } else {
-                    low = mid;
-                }
-            }
-            return low;
-        }
-    }
-    
-    return VISION_RAY_LENGTH;
+float vision_ray_angle(int i) {
+    if (!ray_angles_ready) init_ray_angles();
+    return (i >= 0 && i < NN_NUM_VISION_RAYS) ? ray_angles[i] : 0.0f;
 }
 
 /**
- * @brief Ray-circle intersection test
- * @return Distance to intersection, or RAY_LENGTH if no hit
+ * @brief Test one circle against every ray, sharing the per-circle work
+ *
+ * All rays start at the same point, so the vector to the circle and its
+ * squared length are computed once; each ray then costs a dot product.
  */
-static float ray_circle_intersection(float ray_ox, float ray_oy,
-                                     float ray_dx, float ray_dy,
-                                     float cx, float cy, float radius) {
-    /* Vector from ray origin to circle center */
-    float ocx = cx - ray_ox;
-    float ocy = cy - ray_oy;
-    
-    /* Project onto ray direction */
-    float t_closest = ocx * ray_dx + ocy * ray_dy;
-    
-    /* Closest point is behind ray */
-    if (t_closest < 0) return VISION_RAY_LENGTH;
-    
-    /* Distance squared from closest point on ray to circle center */
-    float closest_x = ray_ox + ray_dx * t_closest;
-    float closest_y = ray_oy + ray_dy * t_closest;
-    float dist_sq = (closest_x - cx) * (closest_x - cx) + 
-                    (closest_y - cy) * (closest_y - cy);
-    
-    float radius_sq = radius * radius;
-    if (dist_sq > radius_sq) return VISION_RAY_LENGTH;
-    
-    /* Calculate intersection point */
-    float half_chord = sqrtf(radius_sq - dist_sq);
-    float t_hit = t_closest - half_chord;
-    
-    if (t_hit < 0) t_hit = t_closest + half_chord;
-    
-    return (t_hit > 0 && t_hit < VISION_RAY_LENGTH) ? t_hit : VISION_RAY_LENGTH;
+static void test_circle_against_rays(Vec2 delta, float delta_len_sq, float radius,
+                                     const Vec2 *ray_dirs, float *dists) {
+    const float radius_sq = radius * radius;
+
+    for (int r = 0; r < NN_NUM_VISION_RAYS; r++) {
+        float along = vec2_dot(delta, ray_dirs[r]);
+        if (along < 0.0f) continue;                 /* behind this ray */
+        if (along - radius >= dists[r]) continue;   /* farther than the current hit */
+
+        float perp_sq = delta_len_sq - along * along;
+        if (perp_sq > radius_sq) continue;          /* ray passes beside it */
+
+        float hit = along - sqrtf(radius_sq - perp_sq);
+        if (hit < 0.0f) hit = 0.0f;                 /* ray starts inside the circle */
+        if (hit < dists[r]) dists[r] = hit;
+    }
 }
 
-/**
- * @brief Raycast against other ants
- */
-static float raycast_ants(float start_x, float start_y,
-                          float ray_dx, float ray_dy,
-                          const Ant *ants, int ant_count,
-                          uint32_t exclude_id) {
-    float nearest_dist = VISION_RAY_LENGTH;
-    
-    for (int i = 0; i < ant_count; i++) {
-        const Ant *ant = &ants[i];
-        
-        if (!ant->alive || ant->id == exclude_id) continue;
-        
-        /* Quick distance check first */
-        float dx = ant->x - start_x;
-        float dy = ant->y - start_y;
-        float dist_sq = dx * dx + dy * dy;
-        
-        if (dist_sq > VISION_RAY_LENGTH_SQ) continue;
-        
-        /* Ray-circle intersection */
-        float hit_dist = ray_circle_intersection(
-            start_x, start_y, ray_dx, ray_dy,
-            ant->x, ant->y, ant->radius
-        );
-        
-        if (hit_dist < nearest_dist) {
-            nearest_dist = hit_dist;
+void vision_cast(const World *w, int self_index, Vec2 pos, float heading,
+                 VisionRay out[NN_NUM_VISION_RAYS]) {
+    if (!ray_angles_ready) init_ray_angles();
+
+    const float range = VISION_RAY_LENGTH;
+
+    /* Ray directions are shared by every candidate, so build them once */
+    Vec2 ray_dirs[NN_NUM_VISION_RAYS];
+    for (int r = 0; r < NN_NUM_VISION_RAYS; r++) {
+        ray_dirs[r] = vec2_from_angle(heading + ray_angles[r]);
+    }
+    Vec2 forward = vec2_from_angle(heading);
+
+    float ant_dist[NN_NUM_VISION_RAYS];
+    float food_dist[NN_NUM_VISION_RAYS];
+    float wall_dist[NN_NUM_VISION_RAYS];
+    for (int r = 0; r < NN_NUM_VISION_RAYS; r++) {
+        ant_dist[r] = range;
+        food_dist[r] = range;
+        wall_dist[r] = range;
+    }
+
+    /* Ants, from the broadphase. The fan only covers what lies ahead, so
+       anything behind the ant is rejected with a single dot product. */
+    int candidates[MAX_ANT_CANDIDATES];
+    int candidate_count = shash_query(&w->ant_grid, pos.x, pos.y, range,
+                                     candidates, MAX_ANT_CANDIDATES);
+    const float ant_reach_sq = (range + ANT_RADIUS) * (range + ANT_RADIUS);
+    for (int i = 0; i < candidate_count; i++) {
+        int idx = candidates[i];
+        if (idx == self_index) continue;
+
+        Vec2 delta = vec2_sub(w->ants[idx].pos, pos);
+        float len_sq = vec2_len_sq(delta);
+        if (len_sq > ant_reach_sq) continue;
+        if (vec2_dot(delta, forward) < -ANT_RADIUS) continue;
+
+        test_circle_against_rays(delta, len_sq, ANT_RADIUS, ray_dirs, ant_dist);
+    }
+
+    /* Food sources are few, so a linear pass is fine */
+    const float food_reach_sq = (range + FOOD_RADIUS) * (range + FOOD_RADIUS);
+    for (int i = 0; i < w->food_count; i++) {
+        if (w->food[i].amount <= 0.0f) continue;
+
+        Vec2 delta = vec2_sub(w->food[i].pos, pos);
+        float len_sq = vec2_len_sq(delta);
+        if (len_sq > food_reach_sq) continue;
+        if (vec2_dot(delta, forward) < -FOOD_RADIUS) continue;
+
+        test_circle_against_rays(delta, len_sq, FOOD_RADIUS, ray_dirs, food_dist);
+    }
+
+    /* Walls: walk the grid once, then test each wall against every ray */
+    int near_walls[MAX_WALL_CANDIDATES];
+    int wall_count = walls_query_circle(&w->walls, pos.x, pos.y, range,
+                                       near_walls, MAX_WALL_CANDIDATES);
+    for (int i = 0; i < wall_count; i++) {
+        for (int r = 0; r < NN_NUM_VISION_RAYS; r++) {
+            float d = walls_ray_rect(&w->walls, near_walls[i], pos, ray_dirs[r], wall_dist[r]);
+            if (d < wall_dist[r]) wall_dist[r] = d;
         }
     }
-    
-    return nearest_dist;
-}
 
-/**
- * @brief Raycast against food sources
- */
-static float raycast_food(float start_x, float start_y,
-                          float ray_dx, float ray_dy,
-                          const FoodSource *food_sources, int food_count) {
-    float nearest_dist = VISION_RAY_LENGTH;
-    
-    for (int i = 0; i < food_count; i++) {
-        const FoodSource *food = &food_sources[i];
-        
-        if (food->amount <= 0) continue;
-        
-        /* Quick distance check */
-        float dx = food->x - start_x;
-        float dy = food->y - start_y;
-        float dist_sq = dx * dx + dy * dy;
-        
-        if (dist_sq > VISION_RAY_LENGTH_SQ) continue;
-        
-        /* Ray-circle intersection */
-        float hit_dist = ray_circle_intersection(
-            start_x, start_y, ray_dx, ray_dy,
-            food->x, food->y, food->radius
-        );
-        
-        if (hit_dist < nearest_dist) {
-            nearest_dist = hit_dist;
-        }
-    }
-    
-    return nearest_dist;
-}
-
-/* ============== Public Functions ============== */
-
-void vision_init(AntVision *vision) {
-    init_ray_angles();
-    
-    vision->num_rays = NN_NUM_VISION_RAYS;
-    memcpy(vision->ray_angles, precomputed_angles, sizeof(precomputed_angles));
-    
-    vision_reset(vision);
-}
-
-void vision_reset(AntVision *vision) {
-    for (int i = 0; i < vision->num_rays; i++) {
-        vision->rays[i].wall_dist = 1.0f;
-        vision->rays[i].ant_dist = 1.0f;
-        vision->rays[i].food_dist = 1.0f;
-        vision->rays[i].hit_wall = false;
-        vision->rays[i].hit_ant = false;
-        vision->rays[i].hit_food = false;
+    /* Report closeness: 1 = touching, 0 = nothing in range */
+    for (int r = 0; r < NN_NUM_VISION_RAYS; r++) {
+        out[r].wall = 1.0f - wall_dist[r] / range;
+        out[r].ant = 1.0f - ant_dist[r] / range;
+        out[r].food = 1.0f - food_dist[r] / range;
     }
 }
 
-void vision_cast_rays(AntVision *vision,
-                      float ant_x, float ant_y, float ant_direction,
-                      const WallManager *wall_manager,
-                      const Ant *ants, int ant_count,
-                      const FoodSource *food_sources, int food_count,
-                      uint32_t exclude_id) {
-    
-    for (int i = 0; i < vision->num_rays; i++) {
-        float ray_angle = ant_direction + vision->ray_angles[i];
-        float ray_dx = cosf(ray_angle);
-        float ray_dy = sinf(ray_angle);
-        
-        VisionRay *ray = &vision->rays[i];
-        
-        /* Cast against each object type */
-        float wall_dist = raycast_walls(ant_x, ant_y, ray_dx, ray_dy, wall_manager);
-        float ant_dist = raycast_ants(ant_x, ant_y, ray_dx, ray_dy, 
-                                       ants, ant_count, exclude_id);
-        float food_dist = raycast_food(ant_x, ant_y, ray_dx, ray_dy,
-                                        food_sources, food_count);
-        
-        /* Normalize and invert (1 = close, 0 = far) */
-        ray->wall_dist = 1.0f - (wall_dist / VISION_RAY_LENGTH);
-        ray->ant_dist = 1.0f - (ant_dist / VISION_RAY_LENGTH);
-        ray->food_dist = 1.0f - (food_dist / VISION_RAY_LENGTH);
-        
-        ray->hit_wall = wall_dist < VISION_RAY_LENGTH;
-        ray->hit_ant = ant_dist < VISION_RAY_LENGTH;
-        ray->hit_food = food_dist < VISION_RAY_LENGTH;
-    }
-}
-
-void vision_get_inputs(const AntVision *vision, float *inputs) {
-    /* Layout: [wall×7, ant×7, food×7] */
-    int idx = 0;
-    
-    /* Wall distances */
-    for (int i = 0; i < vision->num_rays; i++) {
-        inputs[idx++] = vision->rays[i].wall_dist;
-    }
-    
-    /* Ant distances */
-    for (int i = 0; i < vision->num_rays; i++) {
-        inputs[idx++] = vision->rays[i].ant_dist;
-    }
-    
-    /* Food distances */
-    for (int i = 0; i < vision->num_rays; i++) {
-        inputs[idx++] = vision->rays[i].food_dist;
+void vision_to_inputs(const VisionRay rays[NN_NUM_VISION_RAYS], float *inputs) {
+    for (int i = 0; i < NN_NUM_VISION_RAYS; i++) {
+        inputs[i] = rays[i].wall;
+        inputs[NN_NUM_VISION_RAYS + i] = rays[i].ant;
+        inputs[2 * NN_NUM_VISION_RAYS + i] = rays[i].food;
     }
 }

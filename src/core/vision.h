@@ -1,6 +1,10 @@
 /**
  * @file vision.h
- * @brief Ray-based vision system for ants
+ * @brief Ray-based ant vision
+ *
+ * Each ant casts NN_NUM_VISION_RAYS rays across a VISION_FOV_DEGREES arc.
+ * Every ray reports how close the nearest wall, ant and food source are,
+ * as closeness in [0, 1]: 1 = touching, 0 = nothing within range.
  */
 
 #ifndef VISION_H
@@ -8,44 +12,25 @@
 
 #include "types.h"
 
-/**
- * @brief Initialize vision system for an ant
- * Pre-computes ray angles based on FOV configuration
- */
-void vision_init(AntVision *vision);
+struct World;
+
+typedef struct {
+    float wall;
+    float ant;
+    float food;
+} VisionRay;
+
+/** @brief Angle of ray i relative to the ant's heading */
+float vision_ray_angle(int i);
 
 /**
- * @brief Cast all vision rays and update ray results
- * @param vision Vision system to update
- * @param ant_x Ant's X position
- * @param ant_y Ant's Y position
- * @param ant_direction Ant's heading in radians
- * @param wall_manager Wall collision system
- * @param ants Array of all ants
- * @param ant_count Number of ants
- * @param food_sources Array of food sources
- * @param food_count Number of food sources
- * @param exclude_id This ant's ID (exclude from detection)
+ * @brief Cast all rays for one ant
+ * @param self_index Index of the ant in world->ants, excluded from ant hits
  */
-void vision_cast_rays(AntVision *vision,
-                      float ant_x, float ant_y, float ant_direction,
-                      const WallManager *wall_manager,
-                      const Ant *ants, int ant_count,
-                      const FoodSource *food_sources, int food_count,
-                      uint32_t exclude_id);
+void vision_cast(const struct World *w, int self_index, Vec2 pos, float heading,
+                 VisionRay out[NN_NUM_VISION_RAYS]);
 
-/**
- * @brief Get vision inputs for neural network
- * @param vision Vision system
- * @param inputs Output array (must have NN_VISION_INPUTS = 21 elements)
- * 
- * Layout: [wall×7, ant×7, food×7] normalized 0-1 (closer = higher)
- */
-void vision_get_inputs(const AntVision *vision, float *inputs);
-
-/**
- * @brief Reset all rays to default state (nothing detected)
- */
-void vision_reset(AntVision *vision);
+/** @brief Write rays as network inputs: [wall x7, ant x7, food x7] */
+void vision_to_inputs(const VisionRay rays[NN_NUM_VISION_RAYS], float *inputs);
 
 #endif /* VISION_H */

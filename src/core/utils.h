@@ -1,28 +1,25 @@
 /**
  * @file utils.h
- * @brief Utility functions and math helpers
+ * @brief Math helpers and the simulation RNG
  */
 
 #ifndef UTILS_H
 #define UTILS_H
 
 #include <math.h>
-#include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include "types.h"
 
-/* ============== Constants ============== */
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
-#define TWO_PI (2.0 * M_PI)
+#define PI_F     ((float)M_PI)
+#define TWO_PI_F (2.0f * PI_F)
 
-/* ============== Math Utilities ============== */
+/* ============== Scalar helpers ============== */
 
-/**
- * @brief Clamp a value to a range
- */
 static inline float clampf(float x, float min_val, float max_val) {
     return x < min_val ? min_val : (x > max_val ? max_val : x);
 }
@@ -31,139 +28,90 @@ static inline int clampi(int x, int min_val, int max_val) {
     return x < min_val ? min_val : (x > max_val ? max_val : x);
 }
 
-/**
- * @brief Linear interpolation
- */
 static inline float lerpf(float a, float b, float t) {
     return a + t * (b - a);
 }
 
-/**
- * @brief Squared distance between two points (avoids sqrt)
- */
-static inline float dist_sq(float x1, float y1, float x2, float y2) {
-    float dx = x2 - x1;
-    float dy = y2 - y1;
-    return dx * dx + dy * dy;
-}
-
-/**
- * @brief Distance between two points
- */
-static inline float dist(float x1, float y1, float x2, float y2) {
-    return sqrtf(dist_sq(x1, y1, x2, y2));
-}
-
-/**
- * @brief Normalize an angle to [-PI, PI]
- */
+/** @brief Wrap an angle to [-PI, PI] */
 static inline float normalize_angle(float angle) {
-    while (angle > M_PI) angle -= TWO_PI;
-    while (angle < -M_PI) angle += TWO_PI;
+    while (angle > PI_F) angle -= TWO_PI_F;
+    while (angle < -PI_F) angle += TWO_PI_F;
     return angle;
 }
 
-/**
- * @brief Angle difference (shortest path)
- */
+/** @brief Absolute shortest angular distance between two headings */
 static inline float angle_diff(float a, float b) {
-    float diff = normalize_angle(a - b);
-    return fabsf(diff);
+    return fabsf(normalize_angle(a - b));
 }
 
-/**
- * @brief Vector length
- */
-static inline float vec2_len(Vec2 v) {
-    return sqrtf(v.x * v.x + v.y * v.y);
+/** @brief Interpolate between headings along the shortest arc */
+static inline float lerp_angle(float from, float to, float t) {
+    return normalize_angle(from + normalize_angle(to - from) * t);
 }
 
-/**
- * @brief Normalize vector
- */
-static inline Vec2 vec2_normalize(Vec2 v) {
-    float len = vec2_len(v);
-    if (len < 0.0001f) return (Vec2){0, 0};
-    return (Vec2){v.x / len, v.y / len};
+/* ============== Vec2 ============== */
+
+static inline Vec2 vec2(float x, float y) { return (Vec2){x, y}; }
+static inline Vec2 vec2_add(Vec2 a, Vec2 b) { return (Vec2){a.x + b.x, a.y + b.y}; }
+static inline Vec2 vec2_sub(Vec2 a, Vec2 b) { return (Vec2){a.x - b.x, a.y - b.y}; }
+static inline Vec2 vec2_scale(Vec2 v, float s) { return (Vec2){v.x * s, v.y * s}; }
+static inline float vec2_dot(Vec2 a, Vec2 b) { return a.x * b.x + a.y * b.y; }
+static inline float vec2_len_sq(Vec2 v) { return v.x * v.x + v.y * v.y; }
+static inline float vec2_len(Vec2 v) { return sqrtf(vec2_len_sq(v)); }
+static inline Vec2 vec2_from_angle(float a) { return (Vec2){cosf(a), sinf(a)}; }
+
+static inline float vec2_dist_sq(Vec2 a, Vec2 b) {
+    return vec2_len_sq(vec2_sub(a, b));
 }
 
-/**
- * @brief Dot product
- */
-static inline float vec2_dot(Vec2 a, Vec2 b) {
-    return a.x * b.x + a.y * b.y;
+static inline float vec2_dist(Vec2 a, Vec2 b) {
+    return sqrtf(vec2_dist_sq(a, b));
 }
 
-/* ============== Random Number Generation ============== */
-
-/**
- * @brief Initialize RNG with seed
- */
-void rng_seed(uint32_t seed);
-
-/**
- * @brief Get random float in [0, 1]
- */
-float randf(void);
-
-/**
- * @brief Get random float in [min, max]
- */
-static inline float randf_range(float min_val, float max_val) {
-    return min_val + randf() * (max_val - min_val);
+static inline float vec2_angle_to(Vec2 from, Vec2 to) {
+    return atan2f(to.y - from.y, to.x - from.x);
 }
 
-/**
- * @brief Get random int in [min, max)
- */
-int randi_range(int min_val, int max_val);
+/* ============== Rect ============== */
 
-/**
- * @brief Get random value from Gaussian distribution
- */
-float rand_gaussian(float mean, float stddev);
-
-/* ============== Activation Functions ============== */
-
-/**
- * @brief Sigmoid activation (0 to 1)
- */
-static inline float sigmoid(float x) {
-    x = clampf(x, -500.0f, 500.0f);
-    return 1.0f / (1.0f + expf(-x));
+static inline bool rect_contains(const Rect *r, float x, float y) {
+    return x >= (float)r->x && x < (float)(r->x + r->width) &&
+           y >= (float)r->y && y < (float)(r->y + r->height);
 }
 
-/**
- * @brief Tanh activation (-1 to 1)
- */
-static inline float fast_tanh(float x) {
-    x = clampf(x, -500.0f, 500.0f);
-    return tanhf(x);
-}
+/* ============== Random numbers ============== */
 
 /**
- * @brief ReLU activation
+ * @brief xorshift32 generator
+ *
+ * The state is explicit so each World owns its own stream: two worlds
+ * created with the same seed and config replay identically even when
+ * they are stepped alternately in the same process.
  */
-static inline float relu(float x) {
-    return x > 0 ? x : 0;
+typedef struct {
+    uint32_t state;
+    bool has_spare;     /**< Gaussian pairs: a value is held over */
+    float spare;
+} Rng;
+
+/** @brief Seed a generator (seed 0 is replaced; xorshift needs non-zero state) */
+void rng_init(Rng *rng, uint32_t seed);
+
+/** @brief Raw 32-bit draw */
+uint32_t rng_next(Rng *rng);
+
+/** @brief Uniform float in [0, 1) */
+float rng_float(Rng *rng);
+
+/** @brief Uniform float in [min, max) */
+static inline float rng_range(Rng *rng, float min_val, float max_val) {
+    return min_val + rng_float(rng) * (max_val - min_val);
 }
 
-/* ============== Rectangle Utilities ============== */
+/** @brief Uniform int in [min, max) */
+int rng_int(Rng *rng, int min_val, int max_val);
 
-/**
- * @brief Check if point is inside rectangle
- */
-static inline bool rect_contains(const Rect *r, int x, int y) {
-    return x >= r->x && x < r->x + r->width &&
-           y >= r->y && y < r->y + r->height;
-}
-
-/**
- * @brief Check if rectangles intersect
- */
-static inline bool rect_intersects(const Rect *a, const Rect *b) {
-    return a->x < b->x + b->width && a->x + a->width > b->x &&
-           a->y < b->y + b->height && a->y + a->height > b->y;
-}
+/** @brief Normally distributed float */
+float rng_gaussian(Rng *rng, float mean, float stddev);
 
 #endif /* UTILS_H */

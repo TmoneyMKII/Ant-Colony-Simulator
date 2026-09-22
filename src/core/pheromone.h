@@ -1,6 +1,10 @@
 /**
  * @file pheromone.h
- * @brief Pheromone trail system
+ * @brief Grid-based pheromone fields
+ *
+ * FOOD   (green): laid by returning ants, leads TO food
+ * HOME   (blue):  laid by foraging ants, leads TO the nest
+ * DANGER (red):   laid where ants die
  */
 
 #ifndef PHEROMONE_H
@@ -8,89 +12,39 @@
 
 #include "types.h"
 
-/**
- * @brief Create a new pheromone map
- * @param width World width in pixels
- * @param height World height in pixels
- * @param cell_size Grid cell size
- * @return Pointer to new map, or NULL on failure
- */
-PheromoneMap* pheromone_create(int width, int height, int cell_size);
+typedef struct {
+    int cell_size;
+    int cols;
+    int rows;
+    float *layers[PHEROMONE_TYPE_COUNT];   /**< cols*rows each, row-major */
+} PheromoneMap;
 
-/**
- * @brief Free pheromone map memory
- */
-void pheromone_destroy(PheromoneMap *map);
-
-/**
- * @brief Clear all pheromones
- */
+bool pheromone_init(PheromoneMap *map, int world_width, int world_height, int cell_size);
+void pheromone_free(PheromoneMap *map);
 void pheromone_clear(PheromoneMap *map);
 
-/**
- * @brief Update pheromones (apply evaporation)
- */
-void pheromone_update(PheromoneMap *map);
+/** @brief Decay every cell: trails by trail_keep, danger by danger_keep */
+void pheromone_evaporate(PheromoneMap *map, float trail_keep, float danger_keep);
+
+/** @brief Add pheromone at a world position (clamped to PHEROMONE_MAX_VALUE) */
+void pheromone_deposit(PheromoneMap *map, PheromoneType type, float x, float y, float amount);
+
+/** @brief Strength at a world position (0 outside the map) */
+float pheromone_sample(const PheromoneMap *map, PheromoneType type, float x, float y);
 
 /**
- * @brief Deposit pheromone at world position
- * @param map Pheromone map
- * @param x World x coordinate
- * @param y World y coordinate
- * @param amount Amount to deposit
- * @param type Type of pheromone
+ * @brief Direction toward the strongest neighbouring cell
+ *
+ * Neighbours behind the ant (> 90 degrees from heading) are down-weighted
+ * so ants don't turn back along the trail they just laid.
+ * @return true if any neighbour is above the detection threshold
  */
-void pheromone_deposit(PheromoneMap *map, float x, float y, float amount, PheromoneType type);
+bool pheromone_steer(const PheromoneMap *map, PheromoneType type,
+                     float x, float y, float heading, float *out_dir);
 
-/* Convenience functions */
-static inline void pheromone_deposit_food(PheromoneMap *map, float x, float y, float amount) {
-    pheromone_deposit(map, x, y, amount, PHEROMONE_FOOD_TRAIL);
+/** @brief Raw layer data for rendering */
+static inline const float *pheromone_layer(const PheromoneMap *map, PheromoneType type) {
+    return map->layers[type];
 }
-
-static inline void pheromone_deposit_home(PheromoneMap *map, float x, float y, float amount) {
-    pheromone_deposit(map, x, y, amount, PHEROMONE_HOME_TRAIL);
-}
-
-static inline void pheromone_deposit_danger(PheromoneMap *map, float x, float y, float amount) {
-    pheromone_deposit(map, x, y, amount, PHEROMONE_DANGER);
-}
-
-/**
- * @brief Get pheromone strength at world position
- */
-float pheromone_get_strength(const PheromoneMap *map, float x, float y, PheromoneType type);
-
-/**
- * @brief Get direction to follow pheromone trail
- * @param map Pheromone map
- * @param x World x coordinate
- * @param y World y coordinate
- * @param type Type of pheromone
- * @param current_dir Current heading (for forward bias), or NAN to ignore
- * @param out_dir Output: direction in radians
- * @return true if trail found, false otherwise
- */
-bool pheromone_get_direction(const PheromoneMap *map, float x, float y, 
-                              PheromoneType type, float current_dir, float *out_dir);
-
-/**
- * @brief Get danger level at position
- */
-float pheromone_get_danger(const PheromoneMap *map, float x, float y);
-
-/**
- * @brief Convert world coordinates to grid coordinates
- */
-void pheromone_to_grid(const PheromoneMap *map, float x, float y, int *gx, int *gy);
-
-/**
- * @brief Get grid dimensions
- */
-void pheromone_get_grid_size(const PheromoneMap *map, int *width, int *height);
-
-/**
- * @brief Get raw pheromone value at grid cell
- */
-float pheromone_get_cell(const PheromoneMap *map, int gx, int gy, PheromoneType type);
 
 #endif /* PHEROMONE_H */
